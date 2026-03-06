@@ -43,6 +43,8 @@ Host myserver
     RemoteForward 18339 127.0.0.1:18339
 ```
 
+> **Important:** If you use `ControlMaster` for SSH connection multiplexing, see [Troubleshooting — SSH ControlMaster](#ssh-controlmaster-breaks-remoteforward) below.
+
 **4. Done.** `Ctrl+V` in remote Claude Code now pastes images from your Mac.
 
 ## How It Works
@@ -92,8 +94,10 @@ All settings have sensible defaults. Override via flags or environment variables
 - `curl`
 
 **Remote (Linux):**
+- `xclip` (`sudo apt install xclip`) — the shim wraps it; the real binary must exist as fallback
 - `curl` (for shim HTTP calls)
 - `bash` (shim is a bash script)
+- `~/.local/bin` in `PATH` (must have higher priority than `/usr/bin`)
 - SSH access with `RemoteForward` capability
 
 ## Platform Support
@@ -104,6 +108,8 @@ All settings have sensible defaults. Override via flags or environment variables
 
 ## Troubleshooting
 
+### Quick Diagnostics
+
 ```bash
 # Check everything at once
 cc-clip doctor --host myserver
@@ -111,6 +117,116 @@ cc-clip doctor --host myserver
 # Enable debug logging on the shim
 ssh myserver 'CC_CLIP_DEBUG=1 xclip -selection clipboard -t TARGETS -o'
 ```
+
+### Step-by-Step Verification
+
+If image paste isn't working, run these checks **in order** to isolate the problem:
+
+```bash
+# 1. Local: Is the daemon running?
+curl -s http://127.0.0.1:18339/health
+# Expected: {"status":"ok"}
+
+# 2. Remote: Is the tunnel forwarding?
+ssh myserver "curl -s http://127.0.0.1:18339/health"
+# Expected: {"status":"ok"}
+
+# 3. Remote: Is the shim taking priority over real xclip?
+ssh myserver "which xclip"
+# Expected: /home/<user>/.local/bin/xclip  (NOT /usr/bin/xclip)
+
+# 4. Remote: Does the shim intercept correctly? (copy an image on Mac first)
+ssh myserver 'CC_CLIP_DEBUG=1 xclip -selection clipboard -t TARGETS -o'
+# Expected: image/png
+```
+
+### SSH ControlMaster Breaks RemoteForward
+
+**Symptom:** `cc-clip connect` reports "tunnel verified", but the tunnel doesn't work in your interactive SSH session. `curl -s http://127.0.0.1:18339/health` hangs on the remote.
+
+**Cause:** If you use SSH `ControlMaster auto` (connection multiplexing), the first SSH connection becomes the "master". All subsequent connections **reuse the master** — even if you later add `RemoteForward` to your config. The old master connection does not have the port forwarding, so the tunnel silently fails.
+
+`ssh -O exit` to kill the master often doesn't help because the control socket hash (`%C`) may differ between sessions.
+
+**Fix:** Disable `ControlMaster` for hosts that use `RemoteForward`:
+
+```
+# ~/.ssh/config
+Host myserver
+    HostName 10.x.x.x
+    User myuser
+    RemoteForward 18339 127.0.0.1:18339
+    ControlMaster no
+    ControlPath none
+```
+
+This ensures every SSH connection creates a fresh tunnel. The trade-off is slightly slower connection setup (no multiplexing), but it guarantees `RemoteForward` works reliably.
+
+**Alternatively**, if you want to keep `ControlMaster` for other hosts, ensure it's only disabled for this specific host, while keeping the global `Host *` setting for others.
+
+### Daemon Restart Invalidates Token
+
+**Symptom:** "fetch type failed" or "token invalid" in shim debug logs.
+
+**Cause:** Each time `cc-clip serve` starts, it generates a **new token**. The remote server still has the old token from the previous session.
+
+**Fix:** Re-run `cc-clip connect <host>` after every daemon restart to sync the new token.
+
+**Tip:** Run the daemon in the background so it survives terminal closes:
+
+```bash
+nohup cc-clip serve > /tmp/cc-clip.log 2>&1 &
+```
+
+### Remote `xclip` Not Installed
+
+**Symptom:** Shim debug log shows `/usr/bin/xclip: No such file or directory`.
+
+**Cause:** The shim needs the real `xclip` binary as a fallback for non-image clipboard operations (e.g., text paste).
+
+**Fix:**
+
+```bash
+sudo apt install xclip    # Debian/Ubuntu
+sudo yum install xclip    # RHEL/CentOS
+```
+
+Then re-run `cc-clip connect <host>` to re-detect the real binary path.
+
+### `~/.local/bin` Not in PATH
+
+**Symptom:** `cc-clip connect` shows WARNING: `'which xclip' resolves to /usr/bin/xclip, not ~/.local/bin/xclip`.
+
+**Cause:** The shim is installed to `~/.local/bin/` but it's not first in PATH, so the system uses `/usr/bin/xclip` instead.
+
+**Fix:** Add to your remote `~/.bashrc` (or `~/.zshrc`):
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Verify with `which xclip` — it should point to `~/.local/bin/xclip`.
+
+### Empty Image Data (API Error 400)
+
+**Symptom:** Claude Code returns `API Error: 400 — image cannot be empty`. The conversation becomes corrupted and all subsequent image pastes fail in the same session.
+
+**Cause:** A race condition where the clipboard content changes between the TARGETS check and the image fetch. The daemon returns HTTP 204 (No Content), but `curl -sf` treats 2xx as success and writes 0 bytes. The shim outputs empty data, and Claude Code sends an empty base64 image to the API.
+
+**Fix:** This was fixed in [cc6b0b2](https://github.com/shunmei/cc-clip/commit/cc6b0b2). The shim now checks that downloaded data is non-empty before returning success. If you hit this error:
+
+1. In Claude Code, run `/clear` or start a new session (the old conversation is corrupted)
+2. Update to the latest cc-clip and re-run `cc-clip connect <host>`
+
+### No Image in Clipboard
+
+**Symptom:** Shim returns `image/png` for TARGETS but Claude Code says "No image found in clipboard".
+
+**Cause:** You may not have an image in your Mac clipboard. The shim falls back to real `xclip` which reads the remote server's (empty) clipboard.
+
+**Fix:** Copy an image on your Mac first:
+- **Screenshot to clipboard:** `Cmd + Shift + Ctrl + 4` (select area) or `Cmd + Shift + Ctrl + 3` (full screen)
+- **Copy from an app:** Right-click an image → Copy Image
 
 ## Related Issues
 
