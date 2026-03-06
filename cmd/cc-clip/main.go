@@ -407,6 +407,18 @@ func cmdConnect() {
 
 	// Step 5: Install shim (skip if already installed and not forced)
 	needsShim := force || shim.NeedsShimInstall(remoteState)
+	if !needsShim {
+		// Verify the shim file actually exists — cached state can be stale.
+		shimTarget := "xclip"
+		if remoteState != nil && remoteState.ShimTarget != "" {
+			shimTarget = remoteState.ShimTarget
+		}
+		checkCmd := fmt.Sprintf("test -f ~/.local/bin/%s && head -1 ~/.local/bin/%s | grep -q cc-clip", shimTarget, shimTarget)
+		if _, err := session.Exec(checkCmd); err != nil {
+			fmt.Println("[5/7] Shim missing despite cached state, reinstalling")
+			needsShim = true
+		}
+	}
 	if needsShim {
 		fmt.Printf("[5/7] Installing shim...\n")
 		installCmd := fmt.Sprintf("%s install --port %d", remoteBin, port)
@@ -424,23 +436,21 @@ func cmdConnect() {
 		fmt.Println("[5/7] Shim already installed, skipping")
 	}
 
-	// Step 5b: Fix PATH if needed
-	pathFixed := remoteState != nil && remoteState.PathFixed
-	if !pathFixed {
-		fixed, err := shim.IsPathFixedSession(session)
-		if err != nil {
-			log.Printf("      warning: could not check PATH: %v", err)
-		} else if !fixed {
-			fmt.Printf("      fixing remote PATH...\n")
-			if err := shim.FixRemotePathSession(session); err != nil {
-				log.Printf("      warning: PATH fix failed: %v", err)
-			} else {
-				pathFixed = true
-				fmt.Println("      PATH marker injected")
-			}
+	// Step 5b: Fix PATH if needed — always re-check, don't trust cached state
+	var pathFixed bool
+	fixed, pathErr := shim.IsPathFixedSession(session)
+	if pathErr != nil {
+		log.Printf("      warning: could not check PATH: %v", pathErr)
+	} else if !fixed {
+		fmt.Printf("      fixing remote PATH...\n")
+		if err := shim.FixRemotePathSession(session); err != nil {
+			log.Printf("      warning: PATH fix failed: %v", err)
 		} else {
 			pathFixed = true
+			fmt.Println("      PATH marker injected")
 		}
+	} else {
+		pathFixed = true
 	}
 
 	// Step 6: Always sync token

@@ -34,6 +34,8 @@ func logPath() string {
 }
 
 // generatePlist creates the launchd plist XML content.
+// Includes an explicit PATH so Homebrew tools (pngpaste) are found
+// even though launchd doesn't source the user's shell profile.
 func generatePlist(binaryPath string, port int) string {
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -48,6 +50,11 @@ func generatePlist(binaryPath string, port int) string {
         <string>--port</string>
         <string>%d</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

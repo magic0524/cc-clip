@@ -31,22 +31,31 @@ func RunRemote(host string, port int) []CheckResult {
 		results = append(results, CheckResult{"remote-bin", true, strings.TrimSpace(out)})
 	}
 
-	// Check shim installation
-	out, err = shim.RemoteExec(host, "head -2 ~/.local/bin/xclip 2>/dev/null || echo 'not found'")
-	if err != nil || strings.Contains(out, "not found") {
-		results = append(results, CheckResult{"shim", false, "xclip shim not installed"})
-	} else if strings.Contains(out, "cc-clip") {
-		results = append(results, CheckResult{"shim", true, "xclip shim installed"})
+	// Check shim installation — detect which target (xclip or wl-paste)
+	shimTarget := ""
+	for _, target := range []string{"xclip", "wl-paste"} {
+		out, err = shim.RemoteExec(host, fmt.Sprintf("head -2 ~/.local/bin/%s 2>/dev/null || echo 'not found'", target))
+		if err == nil && strings.Contains(out, "cc-clip") {
+			shimTarget = target
+			break
+		}
+	}
+	if shimTarget != "" {
+		results = append(results, CheckResult{"shim", true, fmt.Sprintf("%s shim installed", shimTarget)})
 	} else {
-		results = append(results, CheckResult{"shim", false, "~/.local/bin/xclip exists but is not cc-clip shim"})
+		results = append(results, CheckResult{"shim", false, "no cc-clip shim found (checked xclip and wl-paste)"})
 	}
 
-	// Check PATH priority
-	out, err = shim.RemoteExec(host, "which xclip 2>/dev/null || echo 'not in PATH'")
+	// Check PATH priority for the detected shim target
+	checkTarget := "xclip"
+	if shimTarget != "" {
+		checkTarget = shimTarget
+	}
+	out, err = shim.RemoteExec(host, fmt.Sprintf("which %s 2>/dev/null || echo 'not in PATH'", checkTarget))
 	if err == nil && strings.Contains(out, ".local/bin") {
-		results = append(results, CheckResult{"path-order", true, fmt.Sprintf("xclip resolves to %s", strings.TrimSpace(out))})
+		results = append(results, CheckResult{"path-order", true, fmt.Sprintf("%s resolves to %s", checkTarget, strings.TrimSpace(out))})
 	} else {
-		results = append(results, CheckResult{"path-order", false, fmt.Sprintf("xclip resolves to %s (shim not first)", strings.TrimSpace(out))})
+		results = append(results, CheckResult{"path-order", false, fmt.Sprintf("%s resolves to %s (shim not first)", checkTarget, strings.TrimSpace(out))})
 	}
 
 	// Check tunnel from remote side
