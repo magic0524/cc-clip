@@ -1,14 +1,15 @@
 <p align="center">
-  <h1 align="center">cc-clip</h1>
-  <p align="center">
-    <b>Paste images into remote Claude Code over SSH — as if it were local.</b>
-  </p>
-  <p align="center">
-    <a href="https://github.com/ShunmeiCho/cc-clip/releases"><img src="https://img.shields.io/github/v/release/ShunmeiCho/cc-clip?color=blue" alt="Release"></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
-    <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.21+-00ADD8.svg" alt="Go"></a>
-    <a href="https://github.com/ShunmeiCho/cc-clip/stargazers"><img src="https://img.shields.io/github/stars/ShunmeiCho/cc-clip?style=social" alt="Stars"></a>
-  </p>
+  <img src="img/image.png" alt="cc-clip logo" width="128">
+</p>
+<h1 align="center">cc-clip</h1>
+<p align="center">
+  <b>Paste images into remote Claude Code over SSH — as if it were local.</b>
+</p>
+<p align="center">
+  <a href="https://github.com/ShunmeiCho/cc-clip/releases"><img src="https://img.shields.io/github/v/release/ShunmeiCho/cc-clip?color=D97706" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
+  <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.21+-00ADD8.svg" alt="Go"></a>
+  <a href="https://github.com/ShunmeiCho/cc-clip/stargazers"><img src="https://img.shields.io/github/stars/ShunmeiCho/cc-clip?style=social" alt="Stars"></a>
 </p>
 
 <!-- TODO: Replace with actual GIF demo
