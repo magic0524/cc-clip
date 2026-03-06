@@ -54,18 +54,24 @@ Done. `Ctrl+V` in remote Claude Code now pastes images from your Mac.
 
 ## How It Works
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  Mac (local)                                                     │
-│                                                                  │
-│  pngpaste ──► cc-clip daemon (127.0.0.1:18339)                  │
-└────────────────────────┬─────────────────────────────────────────┘
-                         │  SSH RemoteForward
-┌────────────────────────▼─────────────────────────────────────────┐
-│  Linux (remote)                                                  │
-│                                                                  │
-│  Claude Code ◄── xclip shim ◄── 127.0.0.1:18339 (tunneled)     │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+graph LR
+    subgraph local ["🖥 Mac (local)"]
+        A["📋 Clipboard"] --> B["pngpaste"]
+        B --> C["cc-clip daemon<br/>127.0.0.1:18339"]
+    end
+
+    subgraph remote ["🐧 Linux (remote)"]
+        F["Claude Code"] -- "Ctrl+V" --> E["xclip shim"]
+        E -- "curl" --> D["127.0.0.1:18339"]
+    end
+
+    C == "SSH RemoteForward" ==> D
+
+    style local fill:#1a1a2e,stroke:#e94560,color:#eee
+    style remote fill:#1a1a2e,stroke:#0f3460,color:#eee
+    style A fill:#e94560,stroke:#e94560,color:#fff
+    style F fill:#0f3460,stroke:#0f3460,color:#fff
 ```
 
 1. **Local daemon** reads your Mac clipboard via `pngpaste`, serves images over HTTP on loopback
