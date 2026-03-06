@@ -213,7 +213,7 @@ Verify with `which xclip` — it should point to `~/.local/bin/xclip`.
 
 **Cause:** A race condition where the clipboard content changes between the TARGETS check and the image fetch. The daemon returns HTTP 204 (No Content), but `curl -sf` treats 2xx as success and writes 0 bytes. The shim outputs empty data, and Claude Code sends an empty base64 image to the API.
 
-**Fix:** This was fixed in [cc6b0b2](https://github.com/shunmei/cc-clip/commit/cc6b0b2). The shim now checks that downloaded data is non-empty before returning success. If you hit this error:
+**Fix:** This was fixed in [cc6b0b2](https://github.com/ShunmeiCho/cc-clip/commit/cc6b0b2). The shim now checks that downloaded data is non-empty before returning success. If you hit this error:
 
 1. In Claude Code, run `/clear` or start a new session (the old conversation is corrupted)
 2. Update to the latest cc-clip and re-run `cc-clip connect <host>`
@@ -240,7 +240,7 @@ The following are known pain points that we plan to improve iteratively:
 | Remote PATH not auto-configured | `connect` detects `~/.local/bin` not in PATH but doesn't fix it automatically | Planned |
 | No daemon auto-start | Daemon runs in foreground; `nohup` is a workaround, no launchd/systemd integration yet | Planned |
 
-Contributions and ideas welcome — see [Issues](https://github.com/shunmei/cc-clip/issues).
+Contributions and ideas welcome — see [Issues](https://github.com/ShunmeiCho/cc-clip/issues).
 
 ## Related Issues
 
