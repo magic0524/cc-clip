@@ -97,6 +97,8 @@ func FixRemotePath(host string) error {
 }
 
 // FixRemotePathSession injects the PATH marker block using a RemoteExecutor.
+// The block is prepended (not appended) so it takes effect before any
+// interactive-only guard like `case $- in *i*) ;; *) return;; esac`.
 func FixRemotePathSession(session RemoteExecutor) error {
 	fixed, err := IsPathFixedSession(session)
 	if err != nil {
@@ -114,10 +116,12 @@ func FixRemotePathSession(session RemoteExecutor) error {
 	rcFile := RCFilePath(shell)
 	block := pathBlock()
 
-	// Ensure rc file exists, then append the block
-	appendCmd := fmt.Sprintf("touch %s && printf '\\n%%s' %q >> %s",
-		rcFile, block, rcFile)
-	_, err = session.Exec(appendCmd)
+	// Prepend to rc file so PATH is set before any interactive guard.
+	// Uses a temp file to avoid partial writes.
+	prependCmd := fmt.Sprintf(
+		`touch %s && { printf '%%s\n' %q; cat %s; } > %s.cc-clip-tmp && mv %s.cc-clip-tmp %s`,
+		rcFile, block, rcFile, rcFile, rcFile, rcFile)
+	_, err = session.Exec(prependCmd)
 	if err != nil {
 		return fmt.Errorf("failed to inject PATH block into %s: %w", rcFile, err)
 	}

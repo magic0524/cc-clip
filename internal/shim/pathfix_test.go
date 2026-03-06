@@ -41,11 +41,18 @@ func (m *mockExecutor) Exec(cmd string) (string, error) {
 		return "", nil
 	}
 
-	// Handle touch + printf >> (append to rc file)
+	// Handle touch + prepend (new format: prepend block before existing content)
+	if strings.HasPrefix(cmd, "touch") && strings.Contains(cmd, "cc-clip-tmp") {
+		rcFile := extractRCFileFromPrepend(cmd)
+		block := pathBlock()
+		existing := m.files[rcFile]
+		m.files[rcFile] = block + "\n" + existing
+		return "", nil
+	}
+
+	// Handle touch + printf >> (legacy append to rc file)
 	if strings.HasPrefix(cmd, "touch") && strings.Contains(cmd, ">> ") {
-		// Extract the rc file path from the end of the command
 		rcFile := extractRCFile(cmd)
-		// Extract the block content from the printf argument
 		block := extractPrintfArg(cmd)
 		existing := m.files[rcFile]
 		m.files[rcFile] = existing + "\n" + block
@@ -81,6 +88,17 @@ func (m *mockExecutor) Exec(cmd string) (string, error) {
 	}
 
 	return "", nil
+}
+
+// extractRCFileFromPrepend extracts the rc file from the prepend command.
+// Format: touch ~/.bashrc && { printf '%s\n' "..."; cat ~/.bashrc; } > ~/.bashrc.cc-clip-tmp && mv ...
+func extractRCFileFromPrepend(cmd string) string {
+	// Look for "touch <file>" at the start
+	parts := strings.Fields(cmd)
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return "~/.bashrc"
 }
 
 // extractRCFile extracts the rc file path from commands like:
