@@ -3,7 +3,7 @@
 </p>
 <h1 align="center">cc-clip</h1>
 <p align="center">
-  <b>Paste images into remote Claude Code over SSH — as if it were local.</b>
+  <b>Paste images into remote Claude Code &amp; Codex CLI over SSH — as if it were local.</b>
 </p>
 <p align="center">
   <a href="https://github.com/ShunmeiCho/cc-clip/releases"><img src="https://img.shields.io/github/v/release/ShunmeiCho/cc-clip?color=D97706" alt="Release"></a>
@@ -22,7 +22,7 @@
 
 ## The Problem
 
-When running Claude Code on a remote server via SSH, **Ctrl+V image paste doesn't work**. The remote `xclip` reads the server's clipboard, not your local Mac's. No screenshots, no diagrams, no visual context — you're stuck with text-only.
+When running Claude Code or Codex CLI on a remote server via SSH, **Ctrl+V image paste doesn't work**. The remote clipboard is empty — no screenshots, no diagrams, no visual context. You're stuck with text-only.
 
 ## The Solution
 
@@ -38,11 +38,14 @@ One command. No changes to Claude Code. No terminal-specific hacks. Works everyw
 # Install
 curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
 
-# Setup (one command does everything)
+# Setup for Claude Code (one command does everything)
 cc-clip setup myserver
+
+# Setup for both Claude Code + Codex CLI
+cc-clip setup myserver --codex
 ```
 
-Done. `Ctrl+V` in remote Claude Code now pastes images from your Mac.
+Done. `Ctrl+V` in remote Claude Code and Codex CLI now pastes images from your Mac.
 
 ## Why cc-clip?
 
@@ -99,6 +102,8 @@ graph LR
 | `cc-clip status` | Show local component status |
 | `cc-clip service install` | Install macOS launchd service |
 | `cc-clip service uninstall` | Remove launchd service |
+| `cc-clip connect <host> --codex` | Deploy with Codex CLI support |
+| `cc-clip uninstall --codex --host <host>` | Remove Codex support from remote |
 
 <details>
 <summary>All commands</summary>
@@ -106,7 +111,9 @@ graph LR
 | Command | Description |
 |---------|-------------|
 | `cc-clip setup <host>` | Full setup: deps, SSH config, daemon, deploy |
+| `cc-clip setup <host> --codex` | Full setup including Codex CLI support |
 | `cc-clip connect <host>` | Deploy to remote (incremental) |
+| `cc-clip connect <host> --codex` | Deploy with Codex support (Xvfb + x11-bridge) |
 | `cc-clip connect <host> --token-only` | Sync token only (fast) |
 | `cc-clip connect <host> --force` | Full redeploy ignoring cache |
 | `cc-clip serve` | Start daemon in foreground |
@@ -118,6 +125,8 @@ graph LR
 | `cc-clip doctor --host <host>` | End-to-end health check |
 | `cc-clip status` | Show component status |
 | `cc-clip uninstall` | Remove xclip shim from remote |
+| `cc-clip uninstall --codex` | Remove Codex support (local) |
+| `cc-clip uninstall --codex --host <host>` | Remove Codex support from remote |
 
 </details>
 
@@ -157,6 +166,8 @@ All settings have sensible defaults. Override via environment variables:
 **Local:** macOS 13+ (deps auto-installed by `cc-clip setup`)
 
 **Remote:** Linux with `xclip`, `curl`, `bash`, SSH `RemoteForward` (all auto-configured by `cc-clip connect`)
+
+**Remote (Codex `--codex`):** Additionally requires `Xvfb` (`apt install xvfb`). Auto-detected by `connect --codex`.
 
 ## Troubleshooting
 
