@@ -1,10 +1,12 @@
 package x11bridge
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jezek/xgb"
+	"github.com/jezek/xgb/xproto"
 )
 
 // --- Unit tests (no X11 needed) ---
@@ -52,19 +57,33 @@ func TestIncrTransferIsComplete(t *testing.T) {
 		}
 	})
 
-	t.Run("complete", func(t *testing.T) {
+	t.Run("all data sent but terminator missing", func(t *testing.T) {
 		tr := &IncrTransfer{Data: []byte("hello"), Offset: 5}
+		if tr.IsComplete() {
+			t.Error("expected transfer to stay active until final zero-length marker")
+		}
+	})
+
+	t.Run("complete after terminator", func(t *testing.T) {
+		tr := &IncrTransfer{Data: []byte("hello"), Offset: 5, FinalSent: true}
 		if !tr.IsComplete() {
 			t.Error("expected complete")
 		}
 	})
 
-	t.Run("beyond", func(t *testing.T) {
-		tr := &IncrTransfer{Data: []byte("hello"), Offset: 10}
+	t.Run("beyond after terminator", func(t *testing.T) {
+		tr := &IncrTransfer{Data: []byte("hello"), Offset: 10, FinalSent: true}
 		if !tr.IsComplete() {
 			t.Error("expected complete")
 		}
 	})
+}
+
+func TestIncrTransferIsCompleteNeedsFinalZeroLengthMarker(t *testing.T) {
+	tr := &IncrTransfer{Data: []byte("hello"), Offset: len("hello")}
+	if tr.IsComplete() {
+		t.Fatal("transfer should remain active until the terminating zero-length chunk is sent")
+	}
 }
 
 func TestAtomsToBytes(t *testing.T) {
@@ -216,6 +235,73 @@ func writeTokenFile(t *testing.T, token string) string {
 	return path
 }
 
+func newX11Requestor(t *testing.T, display string) (*xgb.Conn, xproto.Window, xproto.Atom) {
+	t.Helper()
+
+	conn, err := xgb.NewConnDisplay(display)
+	if err != nil {
+		t.Fatalf("cannot connect requestor to X display %s: %v", display, err)
+	}
+	t.Cleanup(func() {
+		conn.Close()
+	})
+
+	setup := xproto.Setup(conn)
+	if len(setup.Roots) == 0 {
+		t.Fatal("requestor X connection has no screens")
+	}
+	screen := setup.Roots[0]
+
+	window, err := xproto.NewWindowId(conn)
+	if err != nil {
+		t.Fatalf("cannot allocate requestor window: %v", err)
+	}
+
+	err = xproto.CreateWindowChecked(
+		conn,
+		screen.RootDepth,
+		window,
+		screen.Root,
+		0, 0, 1, 1, 0,
+		xproto.WindowClassInputOutput,
+		screen.RootVisual,
+		xproto.CwEventMask,
+		[]uint32{xproto.EventMaskPropertyChange},
+	).Check()
+	if err != nil {
+		t.Fatalf("cannot create requestor window: %v", err)
+	}
+
+	reply, err := xproto.InternAtom(conn, false, uint16(len("CC_CLIP_TEST")), "CC_CLIP_TEST").Reply()
+	if err != nil {
+		t.Fatalf("cannot create requestor property atom: %v", err)
+	}
+
+	return conn, window, reply.Atom
+}
+
+func waitForMatchingEvent(t *testing.T, conn *xgb.Conn, timeout time.Duration, match func(xgb.Event) bool) xgb.Event {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		ev, err := conn.PollForEvent()
+		if err != nil {
+			t.Fatalf("unexpected X11 error while waiting for event: %v", err)
+		}
+		if ev != nil {
+			if match(ev) {
+				return ev
+			}
+			continue
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out after %s waiting for matching X11 event", timeout)
+	return nil
+}
+
 // --- Integration tests (require Xvfb + xclip) ---
 
 func TestBridge_ClaimOwnership(t *testing.T) {
@@ -357,6 +443,96 @@ func TestBridge_ImageLargeINCR(t *testing.T) {
 			t.Errorf("INCR image data mismatch at byte %d", i)
 			break
 		}
+	}
+}
+
+func TestBridge_ImageLargeINCRSendsFinalZeroLengthChunk(t *testing.T) {
+	requireXvfbAndXclip(t)
+	display := startTestXvfb(t)
+
+	imageData := make([]byte, 512*1024)
+	rand.Read(imageData)
+
+	tokenFile := writeTokenFile(t, "test-token")
+	srv := startMockDaemon(t, "image", imageData, "test-token")
+	port := portFromURL(srv.URL)
+
+	bridge, err := New(display, port, tokenFile)
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go bridge.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+
+	conn, window, property := newX11Requestor(t, display)
+	atoms := NewAtomCache(conn)
+
+	clipboardAtom := atoms.MustGet(AtomNameClipboard)
+	imagePNGAtom := atoms.MustGet(AtomNameImagePNG)
+	incrAtom := atoms.MustGet(AtomNameIncr)
+
+	if err := xproto.ConvertSelectionChecked(
+		conn,
+		window,
+		clipboardAtom,
+		imagePNGAtom,
+		property,
+		xproto.TimeCurrentTime,
+	).Check(); err != nil {
+		t.Fatalf("ConvertSelection failed: %v", err)
+	}
+
+	waitForMatchingEvent(t, conn, 2*time.Second, func(ev xgb.Event) bool {
+		notify, ok := ev.(xproto.SelectionNotifyEvent)
+		return ok && notify.Requestor == window && notify.Property == property
+	})
+
+	reply, err := xproto.GetProperty(conn, false, window, property, xproto.GetPropertyTypeAny, 0, math.MaxUint32).Reply()
+	if err != nil {
+		t.Fatalf("initial GetProperty failed: %v", err)
+	}
+	if reply.Type != incrAtom {
+		t.Fatalf("expected INCR response type %d, got %d", incrAtom, reply.Type)
+	}
+	if reply.Format != 32 {
+		t.Fatalf("expected INCR response format 32, got %d", reply.Format)
+	}
+	if announced := xgb.Get32(reply.Value); announced != uint32(len(imageData)) {
+		t.Fatalf("announced INCR size = %d, want %d", announced, len(imageData))
+	}
+
+	if err := xproto.DeletePropertyChecked(conn, window, property).Check(); err != nil {
+		t.Fatalf("DeleteProperty failed: %v", err)
+	}
+
+	var received []byte
+	for {
+		waitForMatchingEvent(t, conn, 2*time.Second, func(ev xgb.Event) bool {
+			prop, ok := ev.(xproto.PropertyNotifyEvent)
+			return ok &&
+				prop.Window == window &&
+				prop.Atom == property &&
+				prop.State == xproto.PropertyNewValue
+		})
+
+		reply, err := xproto.GetProperty(conn, true, window, property, xproto.GetPropertyTypeAny, 0, math.MaxUint32).Reply()
+		if err != nil {
+			t.Fatalf("chunk GetProperty failed: %v", err)
+		}
+		if len(reply.Value) == 0 {
+			if reply.Type != imagePNGAtom {
+				t.Fatalf("final INCR chunk should be an explicit zero-length %d property, got type %d", imagePNGAtom, reply.Type)
+			}
+			break
+		}
+		received = append(received, reply.Value...)
+	}
+
+	if !bytes.Equal(received, imageData) {
+		t.Fatalf("INCR payload mismatch: got %d bytes, want %d", len(received), len(imageData))
 	}
 }
 

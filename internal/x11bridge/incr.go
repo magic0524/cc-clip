@@ -19,6 +19,7 @@ import (
 type IncrTransfer struct {
 	Data      []byte
 	Offset    int
+	FinalSent bool
 	ChunkSize int
 	Property  xproto.Atom
 	Requestor xproto.Window
@@ -28,7 +29,7 @@ type IncrTransfer struct {
 // IsComplete returns true when all data has been sent (including the final
 // zero-length marker).
 func (t *IncrTransfer) IsComplete() bool {
-	return t.Offset >= len(t.Data)
+	return t.Offset >= len(t.Data) && t.FinalSent
 }
 
 // startIncr initiates an INCR transfer by writing the INCR marker to the
@@ -93,6 +94,8 @@ func writeNextChunk(conn *xgb.Conn, transfer *IncrTransfer) error {
 		}
 		chunk = transfer.Data[transfer.Offset:end]
 		transfer.Offset = end
+	} else {
+		transfer.FinalSent = true
 	}
 	// else: chunk is nil (zero-length), signaling completion.
 
