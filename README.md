@@ -276,8 +276,17 @@ make build && make test
 
 ## Related
 
+**Claude Code:**
 - [anthropics/claude-code#5277](https://github.com/anthropics/claude-code/issues/5277) — Image paste in SSH sessions
 - [anthropics/claude-code#29204](https://github.com/anthropics/claude-code/issues/29204) — xclip/wl-paste dependency
+
+**Codex CLI:**
+- [openai/codex#6974](https://github.com/openai/codex/issues/6974) — Linux: cannot paste image
+- [openai/codex#6080](https://github.com/openai/codex/issues/6080) — Image pasting issue
+- [openai/codex#13716](https://github.com/openai/codex/issues/13716) — Clipboard image paste failure on Linux
+- [openai/codex#7599](https://github.com/openai/codex/issues/7599) — Image clipboard does not work in WSL
+
+**Other:**
 - [ghostty-org/ghostty#10517](https://github.com/ghostty-org/ghostty/discussions/10517) — SSH image paste discussion
 
 ## License
