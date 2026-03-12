@@ -342,20 +342,48 @@ If step 3 fails, the PATH fix didn't take effect. Log out and back in, or run: `
 <details>
 <summary><b>Ctrl+V doesn't paste images (Codex CLI)</b></summary>
 
+> **Most common cause:** DISPLAY environment variable is empty. You must open a **new** SSH session after setup — existing sessions don't pick up the updated shell rc file.
+
+**Step-by-step verification (run these on the remote server):**
+
 ```bash
-# 1. Check DISPLAY is set (open a new SSH session first)
-ssh myserver 'echo $DISPLAY'
-# Expected: :0 (or another display number)
+# 1. Is DISPLAY set?
+echo $DISPLAY
+# Expected: :0 (or another display number like :1)
+# If empty → open a NEW SSH session, or run: source ~/.bashrc
 
-# 2. Check x11-bridge and Xvfb are running
-ssh myserver 'ps aux | grep -E "cc-clip x11-bridge|Xvfb" | grep -v grep'
+# 2. Is the SSH tunnel working?
+curl -s http://127.0.0.1:18339/health
+# Expected: {"status":"ok"}
+# If fails → open a NEW SSH connection (tunnel activates on connect)
 
-# 3. Check clipboard targets via X11
-ssh myserver 'DISPLAY=:0 xclip -selection clipboard -t TARGETS -o'
-# Expected: image/png (when Mac clipboard has an image)
+# 3. Is Xvfb running?
+ps aux | grep Xvfb | grep -v grep
+# Expected: a Xvfb process
+# If missing → re-run: cc-clip connect myserver --codex --force
+
+# 4. Is x11-bridge running?
+ps aux | grep 'cc-clip x11-bridge' | grep -v grep
+# Expected: a cc-clip x11-bridge process
+# If missing → re-run: cc-clip connect myserver --codex --force
+
+# 5. Does the X11 socket exist?
+ls -la /tmp/.X11-unix/
+# Expected: X0 file (matching your DISPLAY number)
+
+# 6. Can xclip read clipboard via X11? (copy an image on Mac first)
+DISPLAY=:0 xclip -selection clipboard -t TARGETS -o
+# Expected: image/png
 ```
 
-If DISPLAY is empty, open a **new** SSH session — the DISPLAY env var is set in your shell rc file.
+**Common fixes:**
+
+| Step fails | Fix |
+|-----------|-----|
+| Step 1 (DISPLAY empty) | Open a **new** SSH session. If still empty: `source ~/.bashrc` |
+| Step 2 (tunnel down) | Open a **new** SSH connection — tunnel is per-connection |
+| Steps 3-4 (processes missing) | `cc-clip connect myserver --codex --force` from local |
+| Step 6 (no image/png) | Copy an image on Mac first: `Cmd+Shift+Ctrl+4` |
 
 </details>
 
