@@ -128,6 +128,49 @@ func CheckAvailable(session RemoteExecutor) error {
 	return nil
 }
 
+// HasPasswordlessSudo checks if the remote user can run sudo without a password.
+func HasPasswordlessSudo(session RemoteExecutor) bool {
+	_, err := session.Exec("sudo -n true 2>/dev/null")
+	return err == nil
+}
+
+// TryInstall attempts to install Xvfb on the remote host using the detected
+// package manager. Requires passwordless sudo. Returns nil on success, or an
+// error describing why auto-install failed.
+func TryInstall(session RemoteExecutor) error {
+	if !HasPasswordlessSudo(session) {
+		return fmt.Errorf("passwordless sudo not available, cannot auto-install")
+	}
+
+	// Detect package manager and choose the install command.
+	type pkgManager struct {
+		check   string
+		install string
+	}
+	managers := []pkgManager{
+		{"which apt-get", "sudo -n apt-get install -y xvfb"},
+		{"which dnf", "sudo -n dnf install -y xorg-x11-server-Xvfb"},
+		{"which yum", "sudo -n yum install -y xorg-x11-server-Xvfb"},
+		{"which pacman", "sudo -n pacman -S --noconfirm xorg-server-xvfb"},
+	}
+
+	for _, pm := range managers {
+		if _, err := session.Exec(pm.check); err == nil {
+			_, err := session.Exec(pm.install)
+			if err != nil {
+				return fmt.Errorf("install command failed: %w", err)
+			}
+			// Verify it actually installed.
+			if err := CheckAvailable(session); err != nil {
+				return fmt.Errorf("installed but Xvfb still not found in PATH")
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("no supported package manager found (tried apt-get, dnf, yum, pacman)")
+}
+
 // StartRemote starts a headless Xvfb instance on the remote host, or reuses
 // an existing healthy instance. State files are stored under stateDir.
 //

@@ -119,13 +119,7 @@ func FixRemotePathSession(session RemoteExecutor) error {
 	rcFile := RCFilePath(shell)
 	block := pathBlock()
 
-	// Prepend to rc file so PATH is set before any interactive guard.
-	// Uses a temp file to avoid partial writes.
-	prependCmd := fmt.Sprintf(
-		`touch %s && { printf '%%s\n' %q; cat %s; } > %s.cc-clip-tmp && mv %s.cc-clip-tmp %s`,
-		rcFile, block, rcFile, rcFile, rcFile, rcFile)
-	_, err = session.Exec(prependCmd)
-	if err != nil {
+	if err := prependBlock(session, rcFile, block); err != nil {
 		return fmt.Errorf("failed to inject PATH block into %s: %w", rcFile, err)
 	}
 
@@ -179,77 +173,84 @@ fi`
 	return displayMarkerStart + "\n" + body + "\n" + displayMarkerEnd + "\n"
 }
 
-// IsDisplayFixedSession checks if the DISPLAY marker block exists using a RemoteExecutor.
+// IsDisplayFixedSession checks if the DISPLAY marker block exists in any rc file.
 func IsDisplayFixedSession(session RemoteExecutor) (bool, error) {
-	shell, err := DetectRemoteShellSession(session)
-	if err != nil {
-		return false, err
+	for _, rcFile := range []string{"~/.bashrc", "~/.zshrc"} {
+		out, _ := session.Exec(fmt.Sprintf("grep -F %q %s 2>/dev/null || true", displayMarkerStart, rcFile))
+		if strings.Contains(out, displayMarkerStart) {
+			return true, nil
+		}
 	}
-
-	rcFile := RCFilePath(shell)
-	out, err := session.Exec(fmt.Sprintf("grep -F %q %s 2>/dev/null || true", displayMarkerStart, rcFile))
-	if err != nil {
-		return false, fmt.Errorf("failed to check DISPLAY marker: %w", err)
-	}
-
-	return strings.Contains(out, displayMarkerStart), nil
+	return false, nil
 }
 
-// FixDisplaySession idempotently injects the DISPLAY marker block into the remote rc file.
+// FixDisplaySession idempotently injects the DISPLAY marker block into shell rc files.
 // The block is prepended (not appended) so it takes effect before any
 // interactive-only guard like `case $- in *i*) ;; *) return;; esac`.
+//
+// To handle cases where $SHELL reports bash but the user actually uses zsh
+// (or vice versa), the marker is injected into all rc files that exist on
+// the remote host.
 func FixDisplaySession(session RemoteExecutor) error {
-	fixed, err := IsDisplayFixedSession(session)
-	if err != nil {
-		return err
-	}
-	if fixed {
-		return nil
-	}
-
-	shell, err := DetectRemoteShellSession(session)
-	if err != nil {
-		return err
-	}
-
-	rcFile := RCFilePath(shell)
 	block := displayBlock()
 
-	// Prepend to rc file so DISPLAY is set before any interactive guard.
-	// Uses a temp file to avoid partial writes.
-	prependCmd := fmt.Sprintf(
-		`touch %s && { printf '%%s\n' %q; cat %s; } > %s.cc-clip-tmp && mv %s.cc-clip-tmp %s`,
-		rcFile, block, rcFile, rcFile, rcFile, rcFile)
-	_, err = session.Exec(prependCmd)
-	if err != nil {
-		return fmt.Errorf("failed to inject DISPLAY block into %s: %w", rcFile, err)
+	rcFiles := activeRCFiles(session)
+	if len(rcFiles) == 0 {
+		return fmt.Errorf("no shell rc file found on remote")
+	}
+
+	for _, rcFile := range rcFiles {
+		// Check if already injected in this file.
+		out, _ := session.Exec(fmt.Sprintf("grep -F %q %s 2>/dev/null || true", displayMarkerStart, rcFile))
+		if strings.Contains(out, displayMarkerStart) {
+			continue
+		}
+		if err := prependBlock(session, rcFile, block); err != nil {
+			return fmt.Errorf("failed to inject DISPLAY block into %s: %w", rcFile, err)
+		}
 	}
 
 	return nil
 }
 
-// RemoveDisplayMarkerSession removes the DISPLAY marker block using a RemoteExecutor.
+// RemoveDisplayMarkerSession removes the DISPLAY marker block from all rc files.
 func RemoveDisplayMarkerSession(session RemoteExecutor) error {
-	shell, err := DetectRemoteShellSession(session)
-	if err != nil {
-		return err
+	// Clean from both bashrc and zshrc since FixDisplaySession writes to both.
+	for _, rcFile := range []string{"~/.bashrc", "~/.zshrc"} {
+		sedCmd := fmt.Sprintf(
+			`sed -i.cc-clip-bak '/%s/,/%s/d' %s 2>/dev/null; rm -f %s.cc-clip-bak`,
+			sedEscape(displayMarkerStart),
+			sedEscape(displayMarkerEnd),
+			rcFile, rcFile)
+		// Ignore errors — file might not exist.
+		session.Exec(sedCmd)
 	}
-
-	rcFile := RCFilePath(shell)
-
-	// Use sed to remove the marker block.
-	sedCmd := fmt.Sprintf(
-		`sed -i.cc-clip-bak '/%s/,/%s/d' %s 2>/dev/null; rm -f %s.cc-clip-bak`,
-		sedEscape(displayMarkerStart),
-		sedEscape(displayMarkerEnd),
-		rcFile, rcFile)
-
-	_, err = session.Exec(sedCmd)
-	if err != nil {
-		return fmt.Errorf("failed to remove DISPLAY block from %s: %w", rcFile, err)
-	}
-
 	return nil
+}
+
+// prependBlock prepends a text block to a remote file using a heredoc.
+// The heredoc uses a quoted delimiter (<<'CC_CLIP_EOF') to prevent shell
+// variable expansion, preserving $HOME, ${DISPLAY:-}, etc. verbatim.
+func prependBlock(session RemoteExecutor, rcFile, block string) error {
+	// The heredoc delimiter is quoted to prevent variable expansion.
+	// The script: create rc if missing, write block + existing content to tmp, mv into place.
+	prependCmd := fmt.Sprintf(
+		"touch %s && { cat <<'CC_CLIP_EOF'\n%s\nCC_CLIP_EOF\ncat %s; } > %s.cc-clip-tmp && mv %s.cc-clip-tmp %s",
+		rcFile, block, rcFile, rcFile, rcFile, rcFile)
+	_, err := session.Exec(prependCmd)
+	return err
+}
+
+// activeRCFiles returns the list of shell rc files that exist on the remote.
+// Always includes ~/.bashrc (created if needed). Includes ~/.zshrc only if it
+// already exists or zsh is installed.
+func activeRCFiles(session RemoteExecutor) []string {
+	files := []string{"~/.bashrc"}
+	// Add ~/.zshrc if zsh is present (user might use zsh even if $SHELL says bash).
+	if _, err := session.Exec("test -f ~/.zshrc || which zsh >/dev/null 2>&1"); err == nil {
+		files = append(files, "~/.zshrc")
+	}
+	return files
 }
 
 // sedEscape escapes special characters for use in a sed regex pattern.

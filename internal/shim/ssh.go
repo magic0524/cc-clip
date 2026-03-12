@@ -75,13 +75,15 @@ func NewSSHSessionWithControlPath(host, controlPath string) (*SSHSession, error)
 }
 
 // Exec runs a command on the remote host via the SSH master connection.
+// Only stdout is captured as the return value; stderr is discarded to avoid
+// SSH mux control messages (e.g. "mux_client_forward:") contaminating output.
 func (s *SSHSession) Exec(cmd string) (string, error) {
 	c := exec.Command("ssh",
 		"-o", fmt.Sprintf("ControlPath=%s", s.controlPath),
 		s.host,
 		cmd,
 	)
-	out, err := c.CombinedOutput()
+	out, err := c.Output()
 	return strings.TrimSpace(string(out)), err
 }
 

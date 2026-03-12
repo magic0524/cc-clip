@@ -605,6 +605,8 @@ func runConnect(opts connectOpts) {
 	}
 	if needsUpload {
 		fmt.Printf("[4/7] Uploading cc-clip binary...\n")
+		// Stop bridge if running — it holds the binary open, preventing overwrite.
+		stopBridgeRemote(session)
 		// Ensure remote directory exists
 		session.Exec("mkdir -p ~/.local/bin")
 		if err := shim.UploadBinaryViaSession(session, localBin, remoteBin); err != nil {
@@ -1118,11 +1120,19 @@ func runConnectCodex(session *shim.SSHSession, opts connectOpts, binaryUploaded 
 	// Step 8: Codex preflight
 	fmt.Println("[8/11] Codex preflight...")
 	if err := xvfb.CheckAvailable(session); err != nil {
-		fmt.Printf("      %v\n", err)
-		return false
+		fmt.Println("      Xvfb not found, attempting auto-install...")
+		if installErr := xvfb.TryInstall(session); installErr != nil {
+			fmt.Printf("      auto-install failed: %v\n", installErr)
+			fmt.Println("      Install Xvfb manually:")
+			fmt.Println("        Debian/Ubuntu: sudo apt install xvfb")
+			fmt.Println("        RHEL/Fedora:   sudo dnf install xorg-x11-server-Xvfb")
+			return false
+		}
+		fmt.Println("      Xvfb auto-installed")
+	} else {
+		fmt.Println("      Xvfb available")
 	}
 	session.Exec(fmt.Sprintf("mkdir -p %s", codexStateDir))
-	fmt.Println("      Xvfb available")
 
 	// --force: tear down both bridge and Xvfb so they restart fresh.
 	// This handles port changes, display drift, and stale state.
