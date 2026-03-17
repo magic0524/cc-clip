@@ -41,6 +41,17 @@ type msg struct {
 }
 
 func cmdHotkey() {
+	storedCfg, hasStoredCfg, err := loadHotkeyConfig()
+	if err != nil {
+		log.Fatalf("hotkey config error: %v", err)
+	}
+	if !hasStoredCfg {
+		storedCfg = hotkeyConfig{
+			RemoteDir: defaultRemoteUploadDir,
+			DelayMS:   150,
+		}
+	}
+
 	var host string
 	flagArgs := os.Args[2:]
 	if len(os.Args) > 2 && !strings.HasPrefix(os.Args[2], "-") {
@@ -51,10 +62,12 @@ func cmdHotkey() {
 	fs := flag.NewFlagSet("hotkey", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
-	remoteDir := fs.String("remote-dir", defaultRemoteUploadDir, "remote upload directory")
-	delayMS := fs.Int("delay-ms", 150, "delay before Ctrl+Shift+V after Alt+V")
+	remoteDir := fs.String("remote-dir", storedCfg.RemoteDir, "remote upload directory")
+	delayMS := fs.Int("delay-ms", storedCfg.DelayMS, "delay before Ctrl+Shift+V after Alt+V")
 	stop := fs.Bool("stop", false, "stop the background hotkey process")
 	status := fs.Bool("status", false, "show hotkey status")
+	enableAutostart := fs.Bool("enable-autostart", false, "start the hotkey automatically at login")
+	disableAutostart := fs.Bool("disable-autostart", false, "remove hotkey auto-start at login")
 	runLoop := fs.Bool("run-loop", false, "internal background loop")
 
 	if err := fs.Parse(flagArgs); err != nil {
@@ -69,21 +82,48 @@ func cmdHotkey() {
 		stopHotkeyProcess()
 		return
 	}
+	if *disableAutostart {
+		if err := uninstallHotkeyAutostart(); err != nil {
+			log.Fatalf("failed to disable hotkey auto-start: %v", err)
+		}
+		stopHotkeyProcess()
+		fmt.Println("hotkey: auto-start disabled")
+		return
+	}
 	if *status {
 		printHotkeyStatus()
 		return
 	}
 
 	if host == "" {
-		log.Fatal("usage: cc-clip hotkey <host> [--remote-dir DIR] [--delay-ms N] [--stop] [--status]")
+		host = storedCfg.Host
+	}
+	if host == "" {
+		log.Fatal("usage: cc-clip hotkey [<host>] [--remote-dir DIR] [--delay-ms N] [--enable-autostart] [--disable-autostart] [--stop] [--status]")
+	}
+
+	cfg := hotkeyConfig{
+		Host:      host,
+		RemoteDir: *remoteDir,
+		DelayMS:   *delayMS,
+	}
+	if err := saveHotkeyConfig(cfg); err != nil {
+		log.Fatalf("failed to save hotkey config: %v", err)
+	}
+
+	if *enableAutostart {
+		if err := installHotkeyAutostart(); err != nil {
+			log.Fatalf("failed to enable hotkey auto-start: %v", err)
+		}
+		fmt.Println("hotkey: auto-start enabled")
 	}
 
 	if *runLoop {
-		runHotkeyLoop(host, *remoteDir, time.Duration(*delayMS)*time.Millisecond)
+		runHotkeyLoop(cfg.Host, cfg.RemoteDir, time.Duration(cfg.DelayMS)*time.Millisecond)
 		return
 	}
 
-	startHotkeyBackground(host, *remoteDir, *delayMS)
+	startHotkeyBackground(cfg.Host, cfg.RemoteDir, cfg.DelayMS)
 }
 
 func startHotkeyBackground(host, remoteDir string, delayMS int) {
@@ -192,9 +232,29 @@ func printHotkeyStatus() {
 	pid, ok := hotkeyProcessPID()
 	if !ok {
 		fmt.Println("hotkey: not running")
+	} else {
+		fmt.Printf("hotkey: running (PID %d)\n", pid)
+	}
+
+	if hotkeyAutostartEnabled() {
+		fmt.Println("hotkey: auto-start enabled")
+	} else {
+		fmt.Println("hotkey: auto-start disabled")
+	}
+
+	cfg, ok, err := loadHotkeyConfig()
+	if err != nil {
+		fmt.Printf("hotkey: config error: %v\n", err)
 		return
 	}
-	fmt.Printf("hotkey: running (PID %d)\n", pid)
+	if !ok || cfg.Host == "" {
+		fmt.Println("hotkey: no saved default host")
+		return
+	}
+
+	fmt.Printf("hotkey: default host %s\n", cfg.Host)
+	fmt.Printf("hotkey: remote dir %s\n", cfg.RemoteDir)
+	fmt.Printf("hotkey: delay %dms\n", cfg.DelayMS)
 }
 
 func stopHotkeyProcess() {

@@ -9,6 +9,17 @@ import (
 	"time"
 )
 
+func defaultRemoteHost() (string, bool, error) {
+	cfg, ok, err := loadHotkeyConfig()
+	if err != nil {
+		return "", false, err
+	}
+	if !ok || cfg.Host == "" {
+		return "", false, nil
+	}
+	return cfg.Host, true, nil
+}
+
 func pasteRemotePath(remotePath, imagePath string, delay time.Duration, restoreClipboard bool) error {
 	if err := windowsSetClipboardText(remotePath); err != nil {
 		return err

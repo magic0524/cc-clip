@@ -19,11 +19,13 @@ import (
 const defaultRemoteUploadDir = "~/.cache/cc-clip/uploads"
 
 func cmdSend() {
-	if len(os.Args) < 3 {
-		log.Fatal("usage: cc-clip send <host> [--file PATH] [--remote-dir DIR] [--paste] [--delay-ms N] [--no-restore]")
+	host := ""
+	flagArgs := os.Args[2:]
+	if len(os.Args) > 2 && !strings.HasPrefix(os.Args[2], "-") {
+		host = os.Args[2]
+		flagArgs = os.Args[3:]
 	}
 
-	host := os.Args[2]
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 
@@ -33,11 +35,22 @@ func cmdSend() {
 	delayMS := fs.Int("delay-ms", 150, "delay before Ctrl+Shift+V when --paste is used")
 	noRestore := fs.Bool("no-restore", false, "do not restore the original image clipboard after --paste")
 
-	if err := fs.Parse(os.Args[3:]); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		log.Fatal(err)
 	}
 	if *delayMS < 0 {
 		log.Fatalf("invalid --delay-ms: %d", *delayMS)
+	}
+	if host == "" {
+		var ok bool
+		var err error
+		host, ok, err = defaultRemoteHost()
+		if err != nil {
+			log.Fatalf("cannot resolve default host: %v", err)
+		}
+		if !ok || host == "" {
+			log.Fatal("usage: cc-clip send [<host>] [--file PATH] [--remote-dir DIR] [--paste] [--delay-ms N] [--no-restore]")
+		}
 	}
 	restoreClipboard := !*noRestore
 

@@ -204,9 +204,25 @@ After that:
 
 `cc-clip` uploads the local clipboard image to the remote host, pastes the remote file path into the active terminal, and restores your original clipboard image.
 
+The first successful `cc-clip hotkey myserver` run also saves that host as the default target, so future starts can simply use:
+
+```bash
+cc-clip hotkey
+```
+
+To keep the hotkey listener running across logins:
+
+```bash
+cc-clip hotkey myserver --enable-autostart
+```
+
 Manual fallback:
 
 ```bash
+# Uses the saved default host if you already configured `cc-clip hotkey myserver`
+cc-clip send --paste
+
+# Or specify the host explicitly
 cc-clip send myserver --paste
 ```
 
@@ -233,8 +249,8 @@ cc-clip doctor --host myserver
 | `cc-clip status` | Show local component status |
 | `cc-clip service install` | Install macOS launchd service |
 | `cc-clip service uninstall` | Remove launchd service |
-| `cc-clip send <host> --paste` | Windows: upload clipboard image and paste remote path |
-| `cc-clip hotkey <host>` | Windows: register background `Alt+V` upload/paste flow |
+| `cc-clip send [<host>] --paste` | Windows: upload clipboard image and paste remote path |
+| `cc-clip hotkey [<host>]` | Windows: register background `Alt+V` upload/paste flow |
 
 <details>
 <summary>All commands</summary>
@@ -252,9 +268,11 @@ cc-clip doctor --host myserver
 | `cc-clip service install` | Install macOS launchd service |
 | `cc-clip service uninstall` | Remove launchd service |
 | `cc-clip service status` | Show service status |
-| `cc-clip send <host>` | Upload clipboard image to a remote file |
-| `cc-clip send <host> --paste` | Windows: paste the uploaded remote path into the active window |
-| `cc-clip hotkey <host>` | Windows: run a background `Alt+V` listener |
+| `cc-clip send [<host>]` | Upload clipboard image to a remote file |
+| `cc-clip send [<host>] --paste` | Windows: paste the uploaded remote path into the active window |
+| `cc-clip hotkey [<host>]` | Windows: run a background `Alt+V` listener |
+| `cc-clip hotkey --enable-autostart` | Windows: start the hotkey listener automatically at login |
+| `cc-clip hotkey --disable-autostart` | Windows: remove hotkey auto-start at login |
 | `cc-clip hotkey --status` | Windows: show hotkey status |
 | `cc-clip hotkey --stop` | Windows: stop the hotkey listener |
 | `cc-clip doctor` | Local health check |

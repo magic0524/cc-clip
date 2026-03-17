@@ -1,0 +1,146 @@
+//go:build windows
+
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+const hotkeyRegistryKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+const hotkeyRegistryValue = "cc-clip-hotkey"
+
+type hotkeyConfig struct {
+	Host      string `json:"host"`
+	RemoteDir string `json:"remote_dir"`
+	DelayMS   int    `json:"delay_ms"`
+}
+
+func loadHotkeyConfig() (hotkeyConfig, bool, error) {
+	path := hotkeyConfigPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return hotkeyConfig{}, false, nil
+		}
+		return hotkeyConfig{}, false, fmt.Errorf("cannot read hotkey config: %w", err)
+	}
+
+	var cfg hotkeyConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return hotkeyConfig{}, false, fmt.Errorf("cannot parse hotkey config: %w", err)
+	}
+	normalizeHotkeyConfig(&cfg)
+	return cfg, true, nil
+}
+
+func saveHotkeyConfig(cfg hotkeyConfig) error {
+	normalizeHotkeyConfig(&cfg)
+	if cfg.Host == "" {
+		return fmt.Errorf("hotkey host cannot be empty")
+	}
+
+	path := hotkeyConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("cannot create hotkey config directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("cannot encode hotkey config: %w", err)
+	}
+	data = append(data, '\n')
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("cannot write hotkey config: %w", err)
+	}
+	return nil
+}
+
+func normalizeHotkeyConfig(cfg *hotkeyConfig) {
+	if cfg.RemoteDir == "" {
+		cfg.RemoteDir = defaultRemoteUploadDir
+	}
+	if cfg.DelayMS < 0 {
+		cfg.DelayMS = 150
+	}
+}
+
+func hotkeyConfigPath() string {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		cacheDir, cacheErr := os.UserCacheDir()
+		if cacheErr == nil {
+			return filepath.Join(cacheDir, "cc-clip", "hotkey.json")
+		}
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, ".config", "cc-clip", "hotkey.json")
+	}
+	return filepath.Join(configDir, "cc-clip", "hotkey.json")
+}
+
+func hotkeyAutostartVBSPath() string {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		home, _ := os.UserHomeDir()
+		cacheDir = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(cacheDir, "cc-clip", "start-hotkey.vbs")
+}
+
+func hotkeyAutostartEnabled() bool {
+	cmd := exec.Command("reg.exe", "query", hotkeyRegistryKey, "/v", hotkeyRegistryValue)
+	return cmd.Run() == nil
+}
+
+func installHotkeyAutostart() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cannot determine executable path: %w", err)
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return fmt.Errorf("cannot resolve executable path: %w", err)
+	}
+
+	vbsPath := hotkeyAutostartVBSPath()
+	if err := os.MkdirAll(filepath.Dir(vbsPath), 0755); err != nil {
+		return fmt.Errorf("cannot create hotkey launcher directory: %w", err)
+	}
+
+	logFile := hotkeyLogPath()
+	if err := os.MkdirAll(filepath.Dir(logFile), 0755); err != nil {
+		return fmt.Errorf("cannot create hotkey log directory: %w", err)
+	}
+	content := fmt.Sprintf(`Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "cmd.exe /c """"%s"" hotkey --run-loop >> ""%s"" 2>&1""", 0, False
+`, exe, logFile)
+	if err := os.WriteFile(vbsPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("cannot write hotkey launcher: %w", err)
+	}
+
+	regValue := fmt.Sprintf(`wscript.exe "%s"`, vbsPath)
+	cmd := exec.Command("reg.exe", "add", hotkeyRegistryKey, "/v", hotkeyRegistryValue, "/t", "REG_SZ", "/d", regValue, "/f")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("reg add failed: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func uninstallHotkeyAutostart() error {
+	cmd := exec.Command("reg.exe", "delete", hotkeyRegistryKey, "/v", hotkeyRegistryValue, "/f")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		trimmed := strings.TrimSpace(string(out))
+		if strings.Contains(strings.ToLower(trimmed), "unable to find") {
+			_ = os.Remove(hotkeyAutostartVBSPath())
+			return nil
+		}
+		return fmt.Errorf("reg delete failed: %s: %w", trimmed, err)
+	}
+	_ = os.Remove(hotkeyAutostartVBSPath())
+	return nil
+}
