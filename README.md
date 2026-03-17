@@ -28,7 +28,7 @@ When running Claude Code or Codex CLI on a remote server via SSH, **image paste 
 
 ```text
 Claude Code (macOS):   Mac clipboard     → cc-clip daemon → SSH tunnel → xclip shim      → Claude Code
-Claude Code (Windows): Windows clipboard → cc-clip hotkey → SSH/SCP     → remote file path → Claude Code
+Claude Code (Windows): Windows clipboard → cc-clip hotkey → SSH/SCP       → remote file path → Claude Code
 Codex CLI:             Mac clipboard     → cc-clip daemon → SSH tunnel → x11-bridge/Xvfb → Codex CLI
 ```
 
@@ -116,7 +116,7 @@ This single command:
 Windows:
 
 ```bash
-# Start the Alt+V workflow for one remote host
+# Start the default remote hotkey workflow for one remote host
 cc-clip hotkey myserver
 
 # Optional: start automatically after login
@@ -150,7 +150,7 @@ Open your usual SSH session to the server and run Claude Code inside it. Then:
 ```text
 1. Copy or screenshot an image on Windows
 2. Focus the SSH/tmux Claude Code window
-3. Press Alt+V
+3. Press Alt+Shift+V
 ```
 
 `cc-clip` uploads the image and pastes the remote file path into the active terminal. If you prefer a manual command instead of the background hotkey:
@@ -248,7 +248,7 @@ The local daemon runs as a macOS launchd service and starts automatically on log
 On Windows, some `Windows Terminal -> SSH -> tmux -> Claude Code` combinations do not trigger the remote `xclip` path when you press `Alt+V` or `Ctrl+V`. `cc-clip` therefore provides a Windows-native workflow that does not depend on remote clipboard interception:
 
 ```bash
-# Start a background Alt+V listener for one remote host
+# Start a background Alt+Shift+V listener for one remote host
 cc-clip hotkey myserver
 ```
 
@@ -256,7 +256,7 @@ After that:
 
 1. Copy or screenshot an image on Windows
 2. Focus your SSH/tmux Claude Code window
-3. Press `Alt+V`
+3. Press `Alt+Shift+V`
 
 `cc-clip` uploads the local clipboard image to the remote host, pastes the remote file path into the active terminal, and restores your original clipboard image.
 
@@ -270,6 +270,12 @@ To keep the hotkey listener running across logins:
 
 ```bash
 cc-clip hotkey myserver --enable-autostart
+```
+
+To use a different hotkey:
+
+```bash
+cc-clip hotkey myserver --hotkey ctrl+alt+v
 ```
 
 Manual fallback:
@@ -306,7 +312,7 @@ cc-clip doctor --host myserver
 | `cc-clip service install` | Install macOS launchd service |
 | `cc-clip service uninstall` | Remove launchd service |
 | `cc-clip send [<host>] --paste` | Windows: upload clipboard image and paste remote path |
-| `cc-clip hotkey [<host>]` | Windows: register background `Alt+V` upload/paste flow |
+| `cc-clip hotkey [<host>]` | Windows: register the remote upload/paste hotkey |
 
 <details>
 <summary>All commands</summary>
@@ -326,7 +332,7 @@ cc-clip doctor --host myserver
 | `cc-clip service status` | Show service status |
 | `cc-clip send [<host>]` | Upload clipboard image to a remote file |
 | `cc-clip send [<host>] --paste` | Windows: paste the uploaded remote path into the active window |
-| `cc-clip hotkey [<host>]` | Windows: run a background `Alt+V` listener |
+| `cc-clip hotkey [<host>]` | Windows: run a background remote-paste hotkey listener |
 | `cc-clip hotkey --enable-autostart` | Windows: start the hotkey listener automatically at login |
 | `cc-clip hotkey --disable-autostart` | Windows: remove hotkey auto-start at login |
 | `cc-clip hotkey --status` | Windows: show hotkey status |

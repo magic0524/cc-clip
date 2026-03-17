@@ -42,6 +42,9 @@ func TestSaveLoadHotkeyConfig(t *testing.T) {
 	if got.DelayMS != 0 {
 		t.Fatalf("DelayMS = %d, want 0", got.DelayMS)
 	}
+	if got.Hotkey != defaultHotkeyString {
+		t.Fatalf("Hotkey = %q, want %q", got.Hotkey, defaultHotkeyString)
+	}
 }
 
 func TestDefaultRemoteHostUsesSavedHotkeyConfig(t *testing.T) {
@@ -55,6 +58,7 @@ func TestDefaultRemoteHostUsesSavedHotkeyConfig(t *testing.T) {
 		Host:      "saved-host",
 		RemoteDir: defaultRemoteUploadDir,
 		DelayMS:   150,
+		Hotkey:    "ctrl+alt+v",
 	}); err != nil {
 		t.Fatalf("saveHotkeyConfig: %v", err)
 	}
@@ -68,6 +72,52 @@ func TestDefaultRemoteHostUsesSavedHotkeyConfig(t *testing.T) {
 	}
 	if host != "saved-host" {
 		t.Fatalf("host = %q, want %q", host, "saved-host")
+	}
+}
+
+func TestSaveHotkeyConfigNormalizesHotkey(t *testing.T) {
+	tmpDir := t.TempDir()
+	hotkeyConfigPathOverride = filepath.Join(tmpDir, "hotkey.json")
+	t.Cleanup(func() {
+		hotkeyConfigPathOverride = ""
+	})
+
+	if err := saveHotkeyConfig(hotkeyConfig{
+		Host:      "myserver",
+		RemoteDir: defaultRemoteUploadDir,
+		DelayMS:   150,
+		Hotkey:    "Shift+Alt+V",
+	}); err != nil {
+		t.Fatalf("saveHotkeyConfig: %v", err)
+	}
+
+	got, ok, err := loadHotkeyConfig()
+	if err != nil {
+		t.Fatalf("loadHotkeyConfig: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected config to exist")
+	}
+	if got.Hotkey != defaultHotkeyString {
+		t.Fatalf("Hotkey = %q, want %q", got.Hotkey, defaultHotkeyString)
+	}
+}
+
+func TestSaveHotkeyConfigRejectsInvalidHotkey(t *testing.T) {
+	tmpDir := t.TempDir()
+	hotkeyConfigPathOverride = filepath.Join(tmpDir, "hotkey.json")
+	t.Cleanup(func() {
+		hotkeyConfigPathOverride = ""
+	})
+
+	err := saveHotkeyConfig(hotkeyConfig{
+		Host:      "myserver",
+		RemoteDir: defaultRemoteUploadDir,
+		DelayMS:   150,
+		Hotkey:    "v",
+	})
+	if err == nil {
+		t.Fatal("expected invalid hotkey to fail")
 	}
 }
 
@@ -188,5 +238,47 @@ func TestHotkeyAutostartEnabledUsesRegistryQuery(t *testing.T) {
 	}
 	if hotkeyAutostartEnabled() {
 		t.Fatal("expected auto-start to be disabled")
+	}
+}
+
+func TestParseHotkey(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantMod uint32
+		wantKey uint32
+		wantErr bool
+	}{
+		{name: "default", input: "", want: defaultHotkeyString, wantMod: modAlt | modShift, wantKey: 'V'},
+		{name: "ctrl alt v", input: "ctrl+alt+v", want: "ctrl+alt+v", wantMod: modControl | modAlt, wantKey: 'V'},
+		{name: "function key", input: "alt+f8", want: "alt+f8", wantMod: modAlt, wantKey: 0x77},
+		{name: "missing modifier", input: "v", wantErr: true},
+		{name: "duplicate token", input: "alt+alt+v", wantErr: true},
+		{name: "multiple keys", input: "alt+v+x", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseHotkey(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseHotkey: %v", err)
+			}
+			if got.String() != tt.want {
+				t.Fatalf("String() = %q, want %q", got.String(), tt.want)
+			}
+			if got.modifiers != tt.wantMod {
+				t.Fatalf("modifiers = %#x, want %#x", got.modifiers, tt.wantMod)
+			}
+			if got.key != tt.wantKey {
+				t.Fatalf("key = %#x, want %#x", got.key, tt.wantKey)
+			}
+		})
 	}
 }

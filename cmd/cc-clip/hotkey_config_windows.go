@@ -36,6 +36,7 @@ type hotkeyConfig struct {
 	Host      string `json:"host"`
 	RemoteDir string `json:"remote_dir"`
 	DelayMS   int    `json:"delay_ms"`
+	Hotkey    string `json:"hotkey"`
 }
 
 func loadHotkeyConfig() (hotkeyConfig, bool, error) {
@@ -61,6 +62,11 @@ func saveHotkeyConfig(cfg hotkeyConfig) error {
 	if cfg.Host == "" {
 		return fmt.Errorf("hotkey host cannot be empty")
 	}
+	binding, err := parseHotkey(cfg.Hotkey)
+	if err != nil {
+		return err
+	}
+	cfg.Hotkey = binding.String()
 
 	path := hotkeyConfigPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -85,6 +91,9 @@ func normalizeHotkeyConfig(cfg *hotkeyConfig) {
 	}
 	if cfg.DelayMS < 0 {
 		cfg.DelayMS = 150
+	}
+	if strings.TrimSpace(cfg.Hotkey) == "" {
+		cfg.Hotkey = defaultHotkeyString
 	}
 }
 

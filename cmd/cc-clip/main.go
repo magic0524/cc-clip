@@ -101,9 +101,10 @@ Remote:
     --paste          On Windows, paste the remote path into the active window
     --delay-ms       Delay before Ctrl+Shift+V when --paste is used (default: 150)
     --no-restore     Do not restore the original image clipboard after --paste
-  hotkey [<host>]    Windows global Alt+V listener for send --paste
+  hotkey [<host>]    Windows global remote-paste hotkey listener
     --remote-dir     Remote directory (default: ~/.cache/cc-clip/uploads)
-    --delay-ms       Delay before Ctrl+Shift+V after Alt+V (default: 150)
+    --hotkey         Global hotkey to trigger remote paste (default: alt+shift+v)
+    --delay-ms       Delay before Ctrl+Shift+V after the hotkey (default: 150)
     --enable-autostart   Start the hotkey automatically at login
     --disable-autostart  Remove hotkey auto-start at login
     --stop           Stop the background hotkey process

@@ -19,12 +19,22 @@ import (
 
 const (
 	modAlt      = 0x0001
+	modControl  = 0x0002
+	modShift    = 0x0004
+	modWin      = 0x0008
 	modNoRepeat = 0x4000
-	vkV         = 0x56
 	wmHotkey    = 0x0312
 )
 
+const defaultHotkeyString = "alt+shift+v"
+
 var hotkeyRunning atomic.Bool
+
+type hotkeyBinding struct {
+	modifiers uint32
+	key       uint32
+	display   string
+}
 
 type point struct {
 	x int32
@@ -63,7 +73,8 @@ func cmdHotkey() {
 	fs.SetOutput(os.Stderr)
 
 	remoteDir := fs.String("remote-dir", storedCfg.RemoteDir, "remote upload directory")
-	delayMS := fs.Int("delay-ms", storedCfg.DelayMS, "delay before Ctrl+Shift+V after Alt+V")
+	delayMS := fs.Int("delay-ms", storedCfg.DelayMS, "delay before Ctrl+Shift+V after the hotkey")
+	hotkeyValue := fs.String("hotkey", storedCfg.Hotkey, "global hotkey to trigger remote paste (default: alt+shift+v)")
 	stop := fs.Bool("stop", false, "stop the background hotkey process")
 	status := fs.Bool("status", false, "show hotkey status")
 	enableAutostart := fs.Bool("enable-autostart", false, "start the hotkey automatically at login")
@@ -99,13 +110,14 @@ func cmdHotkey() {
 		host = storedCfg.Host
 	}
 	if host == "" {
-		log.Fatal("usage: cc-clip hotkey [<host>] [--remote-dir DIR] [--delay-ms N] [--enable-autostart] [--disable-autostart] [--stop] [--status]")
+		log.Fatal("usage: cc-clip hotkey [<host>] [--remote-dir DIR] [--hotkey KEY] [--delay-ms N] [--enable-autostart] [--disable-autostart] [--stop] [--status]")
 	}
 
 	cfg := hotkeyConfig{
 		Host:      host,
 		RemoteDir: *remoteDir,
 		DelayMS:   *delayMS,
+		Hotkey:    *hotkeyValue,
 	}
 	if err := saveHotkeyConfig(cfg); err != nil {
 		log.Fatalf("failed to save hotkey config: %v", err)
@@ -119,14 +131,14 @@ func cmdHotkey() {
 	}
 
 	if *runLoop {
-		runHotkeyLoop(cfg.Host, cfg.RemoteDir, time.Duration(cfg.DelayMS)*time.Millisecond)
+		runHotkeyLoop(cfg.Host, cfg.RemoteDir, cfg.Hotkey, time.Duration(cfg.DelayMS)*time.Millisecond)
 		return
 	}
 
-	startHotkeyBackground(cfg.Host, cfg.RemoteDir, cfg.DelayMS)
+	startHotkeyBackground(cfg.Host, cfg.RemoteDir, cfg.Hotkey, cfg.DelayMS)
 }
 
-func startHotkeyBackground(host, remoteDir string, delayMS int) {
+func startHotkeyBackground(host, remoteDir, hotkey string, delayMS int) {
 	hotkeyStopIfStale()
 	if pid, ok := hotkeyProcessPID(); ok {
 		fmt.Printf("hotkey: already running (PID %d)\n", pid)
@@ -142,6 +154,7 @@ func startHotkeyBackground(host, remoteDir string, delayMS int) {
 		"hotkey",
 		host,
 		"--remote-dir", remoteDir,
+		"--hotkey", hotkey,
 		"--delay-ms", strconv.Itoa(delayMS),
 		"--run-loop",
 	}
@@ -154,10 +167,10 @@ func startHotkeyBackground(host, remoteDir string, delayMS int) {
 	if err := writeHotkeyPID(cmd.Process.Pid); err != nil {
 		log.Fatalf("hotkey started (PID %d) but pid file write failed: %v", cmd.Process.Pid, err)
 	}
-	fmt.Printf("hotkey: started in background (PID %d), trigger with Alt+V\n", cmd.Process.Pid)
+	fmt.Printf("hotkey: started in background (PID %d), trigger with %s\n", cmd.Process.Pid, hotkey)
 }
 
-func runHotkeyLoop(host, remoteDir string, delay time.Duration) {
+func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 	if err := initHotkeyLogger(); err != nil {
 		log.Fatalf("hotkey logger setup failed: %v", err)
 	}
@@ -166,7 +179,12 @@ func runHotkeyLoop(host, remoteDir string, delay time.Duration) {
 	}
 	defer os.Remove(hotkeyPIDPath())
 
-	log.Printf("hotkey: starting for host=%s remote_dir=%s", host, remoteDir)
+	binding, err := parseHotkey(hotkey)
+	if err != nil {
+		log.Fatalf("hotkey: invalid hotkey %q: %v", hotkey, err)
+	}
+
+	log.Printf("hotkey: starting for host=%s remote_dir=%s hotkey=%s", host, remoteDir, binding.String())
 
 	user32 := syscall.NewLazyDLL("user32.dll")
 	registerHotKey := user32.NewProc("RegisterHotKey")
@@ -174,12 +192,12 @@ func runHotkeyLoop(host, remoteDir string, delay time.Duration) {
 	getMessage := user32.NewProc("GetMessageW")
 
 	const hotkeyID = 1
-	r1, _, err := registerHotKey.Call(0, hotkeyID, modAlt|modNoRepeat, vkV)
+	r1, _, err := registerHotKey.Call(0, hotkeyID, uintptr(binding.modifiers|modNoRepeat), uintptr(binding.key))
 	if r1 == 0 {
 		log.Fatalf("hotkey: RegisterHotKey failed: %v", err)
 	}
 	defer unregisterHotKey.Call(0, hotkeyID)
-	log.Printf("hotkey: registered Alt+V")
+	log.Printf("hotkey: registered %s", binding.String())
 
 	var m msg
 	for {
@@ -197,13 +215,13 @@ func runHotkeyLoop(host, remoteDir string, delay time.Duration) {
 			continue
 		}
 		if hotkeyRunning.Swap(true) {
-			log.Printf("hotkey: ignored repeated Alt+V while previous send is still running")
+			log.Printf("hotkey: ignored repeated %s while previous send is still running", binding.String())
 			continue
 		}
 
 		go func() {
 			defer hotkeyRunning.Store(false)
-			if err := handleHotkeyPress(host, remoteDir, delay); err != nil {
+			if err := handleHotkeyPress(host, remoteDir, binding, delay); err != nil {
 				log.Printf("hotkey: send failed: %v", err)
 				return
 			}
@@ -212,8 +230,8 @@ func runHotkeyLoop(host, remoteDir string, delay time.Duration) {
 	}
 }
 
-func handleHotkeyPress(host, remoteDir string, delay time.Duration) error {
-	log.Printf("hotkey: Alt+V pressed")
+func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time.Duration) error {
+	log.Printf("hotkey: %s pressed", binding.String())
 	result, err := uploadImage(host, remoteDir, "")
 	if err != nil {
 		return err
@@ -255,6 +273,7 @@ func printHotkeyStatus() {
 	fmt.Printf("hotkey: default host %s\n", cfg.Host)
 	fmt.Printf("hotkey: remote dir %s\n", cfg.RemoteDir)
 	fmt.Printf("hotkey: delay %dms\n", cfg.DelayMS)
+	fmt.Printf("hotkey: key %s\n", cfg.Hotkey)
 }
 
 func stopHotkeyProcess() {
@@ -351,4 +370,115 @@ func initHotkeyLogger() error {
 	log.SetOutput(f)
 	log.SetFlags(log.LstdFlags)
 	return nil
+}
+
+func parseHotkey(value string) (hotkeyBinding, error) {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		value = defaultHotkeyString
+	}
+
+	parts := strings.Split(value, "+")
+	if len(parts) < 2 {
+		return hotkeyBinding{}, fmt.Errorf("expected at least one modifier and one key, got %q", value)
+	}
+
+	var modifiers uint32
+	var keyToken string
+	seen := map[string]bool{}
+	for _, part := range parts {
+		token := strings.TrimSpace(part)
+		if token == "" {
+			return hotkeyBinding{}, fmt.Errorf("invalid hotkey %q", value)
+		}
+		if seen[token] {
+			return hotkeyBinding{}, fmt.Errorf("duplicate hotkey token %q", token)
+		}
+		seen[token] = true
+
+		switch token {
+		case "alt":
+			modifiers |= modAlt
+		case "ctrl", "control":
+			modifiers |= modControl
+		case "shift":
+			modifiers |= modShift
+		case "win", "windows", "meta":
+			modifiers |= modWin
+		default:
+			if keyToken != "" {
+				return hotkeyBinding{}, fmt.Errorf("multiple keys in hotkey %q", value)
+			}
+			keyToken = token
+		}
+	}
+
+	if modifiers == 0 {
+		return hotkeyBinding{}, fmt.Errorf("hotkey %q must include at least one modifier", value)
+	}
+	if keyToken == "" {
+		return hotkeyBinding{}, fmt.Errorf("hotkey %q must include a key", value)
+	}
+
+	key, displayKey, err := parseHotkeyKey(keyToken)
+	if err != nil {
+		return hotkeyBinding{}, err
+	}
+
+	displayParts := make([]string, 0, 4)
+	if modifiers&modControl != 0 {
+		displayParts = append(displayParts, "ctrl")
+	}
+	if modifiers&modAlt != 0 {
+		displayParts = append(displayParts, "alt")
+	}
+	if modifiers&modShift != 0 {
+		displayParts = append(displayParts, "shift")
+	}
+	if modifiers&modWin != 0 {
+		displayParts = append(displayParts, "win")
+	}
+	displayParts = append(displayParts, displayKey)
+
+	return hotkeyBinding{
+		modifiers: modifiers,
+		key:       key,
+		display:   strings.Join(displayParts, "+"),
+	}, nil
+}
+
+func parseHotkeyKey(token string) (uint32, string, error) {
+	if len(token) == 1 {
+		ch := token[0]
+		switch {
+		case ch >= 'a' && ch <= 'z':
+			return uint32(ch - 'a' + 'A'), token, nil
+		case ch >= '0' && ch <= '9':
+			return uint32(ch), token, nil
+		}
+	}
+
+	if strings.HasPrefix(token, "f") {
+		n, err := strconv.Atoi(strings.TrimPrefix(token, "f"))
+		if err == nil && n >= 1 && n <= 24 {
+			return uint32(0x70 + n - 1), token, nil
+		}
+	}
+
+	special := map[string]struct {
+		key     uint32
+		display string
+	}{
+		"insert": {0x2D, "insert"},
+		"delete": {0x2E, "delete"},
+	}
+	if entry, ok := special[token]; ok {
+		return entry.key, entry.display, nil
+	}
+
+	return 0, "", fmt.Errorf("unsupported hotkey key %q", token)
+}
+
+func (h hotkeyBinding) String() string {
+	return h.display
 }
