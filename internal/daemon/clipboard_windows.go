@@ -17,14 +17,14 @@ func NewClipboardReader() ClipboardReader {
 func (c *windowsClipboard) Type() (ClipboardInfo, error) {
 	// Use PowerShell to check clipboard format
 	cmd := exec.Command("powershell", "-NoProfile", "-Command",
-		"[System.Windows.Forms.Clipboard]::ContainsImage()")
+		"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::ContainsImage()")
 	out, err := cmd.Output()
 	if err == nil && strings.TrimSpace(string(out)) == "True" {
 		return ClipboardInfo{Type: ClipboardImage, Format: "png"}, nil
 	}
 
 	cmd = exec.Command("powershell", "-NoProfile", "-Command",
-		"[System.Windows.Forms.Clipboard]::ContainsText()")
+		"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::ContainsText()")
 	out, err = cmd.Output()
 	if err == nil && strings.TrimSpace(string(out)) == "True" {
 		return ClipboardInfo{Type: ClipboardText}, nil
