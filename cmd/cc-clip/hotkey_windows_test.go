@@ -17,40 +17,37 @@ func TestStopHotkeyProcessWritesStopSentinel(t *testing.T) {
 
 	hotkeyPIDPathOverride = pidFile
 	hotkeyStopFilePathOverride = stopFile
-	origFunc := localProcessCommandFunc
+	originalCmdFunc := localProcessCommandFunc
 	t.Cleanup(func() {
 		hotkeyPIDPathOverride = ""
 		hotkeyStopFilePathOverride = ""
-		localProcessCommandFunc = origFunc
+		localProcessCommandFunc = originalCmdFunc
 	})
 
-	// Mock localProcessCommand to always report "hotkey" in command line
-	// so stopHotkeyProcess doesn't refuse to kill.
+	// Mock localProcessCommand so it always reports "hotkey" in the
+	// command line — prevents stopHotkeyProcess from refusing to kill.
 	localProcessCommandFunc = func(pid int) (string, error) {
 		return "cc-clip.exe hotkey --run-loop", nil
 	}
 
-	// Start a real subprocess that we can kill.
+	// Start a real child process that stopHotkeyProcess can kill.
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", "Start-Sleep 60")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start child process: %v", err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill() })
 
-	// Write the PID file pointing to our subprocess.
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0644); err != nil {
 		t.Fatalf("write PID file: %v", err)
 	}
 
-	// Call stopHotkeyProcess — should write stop sentinel before killing.
 	stopHotkeyProcess()
 
-	// Assert: stop sentinel was created.
+	// Stop sentinel must exist — this is what prevents the VBS loop from respawning.
 	if _, err := os.Stat(stopFile); os.IsNotExist(err) {
 		t.Fatal("expected stop sentinel file to be created, but it does not exist")
 	}
-
-	// Assert: PID file was removed.
+	// PID file must be cleaned up.
 	if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
 		t.Fatal("expected PID file to be removed after stop")
 	}
@@ -63,21 +60,22 @@ func TestStopHotkeyProcessNoopWhenNotRunning(t *testing.T) {
 
 	hotkeyPIDPathOverride = pidFile
 	hotkeyStopFilePathOverride = stopFile
-	origFunc := localProcessCommandFunc
+	originalCmdFunc := localProcessCommandFunc
 	t.Cleanup(func() {
 		hotkeyPIDPathOverride = ""
 		hotkeyStopFilePathOverride = ""
-		localProcessCommandFunc = origFunc
+		localProcessCommandFunc = originalCmdFunc
 	})
 
 	localProcessCommandFunc = func(pid int) (string, error) {
 		return "cc-clip.exe hotkey --run-loop", nil
 	}
 
-	// No PID file — stopHotkeyProcess should just print "not running".
+	// No PID file exists — stopHotkeyProcess should be a no-op.
 	stopHotkeyProcess()
 
-	// Stop sentinel should NOT be created when nothing was running.
+	// Stop sentinel must NOT be created when nothing was running,
+	// otherwise a future manual start would immediately see the sentinel and exit.
 	if _, err := os.Stat(stopFile); !os.IsNotExist(err) {
 		t.Fatal("expected no stop sentinel file when hotkey is not running")
 	}

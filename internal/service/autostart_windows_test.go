@@ -8,9 +8,10 @@ import (
 )
 
 func TestStatusNotInstalled(t *testing.T) {
-	origQuery := regQuery
-	t.Cleanup(func() { regQuery = origQuery })
+	originalQuery := regQuery
+	t.Cleanup(func() { regQuery = originalQuery })
 
+	// Registry entry does not exist — Status should report not installed.
 	regQuery = func(key, name string) (string, error) {
 		return "", errors.New("not found")
 	}
@@ -25,13 +26,14 @@ func TestStatusNotInstalled(t *testing.T) {
 }
 
 func TestStatusInstalledAndRunning(t *testing.T) {
-	origQuery := regQuery
-	origChecker := processChecker
+	originalQuery := regQuery
+	originalChecker := processChecker
 	t.Cleanup(func() {
-		regQuery = origQuery
-		processChecker = origChecker
+		regQuery = originalQuery
+		processChecker = originalChecker
 	})
 
+	// Registry entry exists and Get-CimInstance reports a "serve" process.
 	regQuery = func(key, name string) (string, error) {
 		return "wscript.exe ...", nil
 	}
@@ -49,13 +51,14 @@ func TestStatusInstalledAndRunning(t *testing.T) {
 }
 
 func TestStatusInstalledButNotRunning(t *testing.T) {
-	origQuery := regQuery
-	origChecker := processChecker
+	originalQuery := regQuery
+	originalChecker := processChecker
 	t.Cleanup(func() {
-		regQuery = origQuery
-		processChecker = origChecker
+		regQuery = originalQuery
+		processChecker = originalChecker
 	})
 
+	// Registry entry exists but Get-CimInstance finds no matching process.
 	regQuery = func(key, name string) (string, error) {
 		return "wscript.exe ...", nil
 	}
@@ -73,13 +76,15 @@ func TestStatusInstalledButNotRunning(t *testing.T) {
 }
 
 func TestStatusInstalledButDifferentProcess(t *testing.T) {
-	origQuery := regQuery
-	origChecker := processChecker
+	originalQuery := regQuery
+	originalChecker := processChecker
 	t.Cleanup(func() {
-		regQuery = origQuery
-		processChecker = origChecker
+		regQuery = originalQuery
+		processChecker = originalChecker
 	})
 
+	// Registry entry exists, cc-clip.exe is running, but it's the hotkey
+	// process, not the daemon — Status should report not running.
 	regQuery = func(key, name string) (string, error) {
 		return "wscript.exe ...", nil
 	}
