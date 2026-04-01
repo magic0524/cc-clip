@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,11 +22,18 @@ func TestStopLocalProcessDoesNotKillUnexpectedCommand(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start helper process: %v", err)
 	}
+
+	// Use sync.Once to ensure cmd.Wait() is called exactly once,
+	// preventing a data race between the cleanup and the goroutine.
+	var waitOnce sync.Once
+	var waitErr error
+	doWait := func() { waitOnce.Do(func() { waitErr = cmd.Wait() }) }
+
 	t.Cleanup(func() {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
-		_ = cmd.Wait()
+		doWait()
 	})
 
 	pidFile := filepath.Join(t.TempDir(), "helper.pid")
@@ -36,14 +44,15 @@ func TestStopLocalProcessDoesNotKillUnexpectedCommand(t *testing.T) {
 	stopLocalProcess(pidFile, "Xvfb")
 	time.Sleep(100 * time.Millisecond)
 
-	waitDone := make(chan error, 1)
+	waitDone := make(chan struct{}, 1)
 	go func() {
-		waitDone <- cmd.Wait()
+		doWait()
+		waitDone <- struct{}{}
 	}()
 
 	select {
-	case err := <-waitDone:
-		t.Fatalf("unexpected command should still be running, but exited early: %v", err)
+	case <-waitDone:
+		t.Fatalf("unexpected command should still be running, but exited early: %v", waitErr)
 	case <-time.After(200 * time.Millisecond):
 	}
 

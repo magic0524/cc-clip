@@ -11,8 +11,10 @@ const (
 	KindGenericMessage NotifyKind = "generic_message"
 )
 
-// NotifyEnvelope is the unified notification model. Exactly one payload
-// field is non-nil, matching Kind.
+// NotifyEnvelope is the unified notification model. For KindToolAttention,
+// both ToolAttention and GenericMessage may be set (GenericMessage carries
+// display-ready text derived by the classifier). For other kinds, exactly
+// one payload field is non-nil, matching Kind.
 type NotifyEnvelope struct {
 	Kind      NotifyKind
 	Source    string
