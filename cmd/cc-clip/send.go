@@ -86,6 +86,16 @@ func uploadImage(host, remoteDir, localFile string) (*uploadResult, error) {
 	return uploadClipboardImage(host, remoteDir)
 }
 
+// cleanupOldRemoteFiles removes files older than 3 days in remoteAbsDir on
+// host. Errors are silently ignored — cleanup is best-effort and must never
+// block an upload.
+func cleanupOldRemoteFiles(host, remoteAbsDir string) {
+	// -mtime +3 matches files whose modification time is more than 3*24 h ago.
+	// We only delete regular files (not subdirs) to avoid accidental damage.
+	cmd := "find " + shQuote(remoteAbsDir) + " -maxdepth 1 -type f -mtime +3 -delete 2>/dev/null || true"
+	_, _ = remoteExecNoForward(host, cmd)
+}
+
 // uploadImageWithFilename uploads localFile to host:remoteDir/filename.
 // The filename is provided by the caller so that multiple hosts share the
 // same leaf name, making the pasted path valid on any of them.
@@ -100,6 +110,7 @@ func uploadImageWithFilename(host, remoteDir, localFile, filename string) (*uplo
 	if _, err := remoteExecNoForward(host, "mkdir -p "+shQuote(remoteAbsDir)); err != nil {
 		return nil, fmt.Errorf("failed to create remote dir %s: %w", remoteAbsDir, err)
 	}
+	cleanupOldRemoteFiles(host, remoteAbsDir)
 	if err := scpUploadNoForward(host, localFile, remotePath); err != nil {
 		return nil, fmt.Errorf("failed to upload image to %s: %w", remotePath, err)
 	}
@@ -143,6 +154,7 @@ func uploadClipboardImage(host, remoteDir string) (*uploadResult, error) {
 	if _, err := remoteExecNoForward(host, "mkdir -p "+shQuote(remoteAbsDir)); err != nil {
 		return nil, fmt.Errorf("failed to create remote dir %s: %w", remoteAbsDir, err)
 	}
+	cleanupOldRemoteFiles(host, remoteAbsDir)
 
 	localPath, err := writeTempImage(data, ext)
 	if err != nil {
