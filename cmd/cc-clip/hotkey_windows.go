@@ -303,7 +303,15 @@ func handleHotkeyPress(hosts []string, remoteDir string, binding hotkeyBinding, 
 		return err
 	}
 	defer os.Remove(localPath)
-	_ = ext // extension already embedded in the filename chosen by readClipboardToTempFile
+	_ = ext
+
+	// Generate one shared filename so every host stores the image at the same
+	// leaf name. Each host still resolves its own absolute path via remoteHomeDir,
+	// but because the filename is identical the pasted path works on any host.
+	filename, err := randomFilename(ext)
+	if err != nil {
+		return fmt.Errorf("failed to generate filename: %w", err)
+	}
 
 	type hostResult struct {
 		host       string
@@ -317,7 +325,7 @@ func handleHotkeyPress(hosts []string, remoteDir string, binding hotkeyBinding, 
 		wg.Add(1)
 		go func(idx int, h string) {
 			defer wg.Done()
-			res, err := uploadImage(h, remoteDir, localPath)
+			res, err := uploadImageWithFilename(h, remoteDir, localPath, filename)
 			if err != nil {
 				results[idx] = hostResult{host: h, err: err}
 				log.Printf("hotkey: upload to %s failed: %v", h, err)
@@ -329,7 +337,6 @@ func handleHotkeyPress(hosts []string, remoteDir string, binding hotkeyBinding, 
 	}
 	wg.Wait()
 
-	// Find first successful result for paste.
 	var firstRemotePath, firstHost string
 	successCount := 0
 	for _, r := range results {
@@ -343,7 +350,6 @@ func handleHotkeyPress(hosts []string, remoteDir string, binding hotkeyBinding, 
 	}
 
 	if successCount == 0 {
-		// All hosts failed; surface the first error.
 		firstErr := results[0].err
 		if tray != nil {
 			tray.showBalloon("cc-clip", "Send failed: "+firstErr.Error(), niifError)
@@ -351,6 +357,10 @@ func handleHotkeyPress(hosts []string, remoteDir string, binding hotkeyBinding, 
 		return firstErr
 	}
 
+	// firstRemotePath is the absolute path on firstHost. Because all hosts use
+	// the same filename under the same remoteDir, this path is valid on every
+	// host (assuming identical home dirs, which is the common case). The user
+	// can paste it on any host's terminal.
 	if err := pasteRemotePath(firstRemotePath, localPath, delay, true); err != nil {
 		if tray != nil {
 			tray.showBalloon("cc-clip", "Paste failed: "+err.Error(), niifError)

@@ -86,6 +86,29 @@ func uploadImage(host, remoteDir, localFile string) (*uploadResult, error) {
 	return uploadClipboardImage(host, remoteDir)
 }
 
+// uploadImageWithFilename uploads localFile to host:remoteDir/filename.
+// The filename is provided by the caller so that multiple hosts share the
+// same leaf name, making the pasted path valid on any of them.
+func uploadImageWithFilename(host, remoteDir, localFile, filename string) (*uploadResult, error) {
+	remoteHome, err := remoteHomeDir(host)
+	if err != nil {
+		return nil, err
+	}
+	remoteAbsDir := resolveRemoteDir(remoteHome, remoteDir)
+	remotePath := path.Join(remoteAbsDir, filename)
+
+	if _, err := remoteExecNoForward(host, "mkdir -p "+shQuote(remoteAbsDir)); err != nil {
+		return nil, fmt.Errorf("failed to create remote dir %s: %w", remoteAbsDir, err)
+	}
+	if err := scpUploadNoForward(host, localFile, remotePath); err != nil {
+		return nil, fmt.Errorf("failed to upload image to %s: %w", remotePath, err)
+	}
+	return &uploadResult{
+		RemotePath:     remotePath,
+		LocalImagePath: localFile,
+	}, nil
+}
+
 func uploadClipboardImage(host, remoteDir string) (*uploadResult, error) {
 	clip := daemon.NewClipboardReader()
 	info, err := clip.Type()
