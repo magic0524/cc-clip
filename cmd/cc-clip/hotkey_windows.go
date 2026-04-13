@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -62,11 +63,16 @@ func cmdHotkey() {
 		}
 	}
 
-	var host string
+	// Collect all leading non-flag arguments as hosts.
+	var hosts []string
 	flagArgs := os.Args[2:]
-	if len(os.Args) > 2 && !strings.HasPrefix(os.Args[2], "-") {
-		host = os.Args[2]
-		flagArgs = os.Args[3:]
+	for i, arg := range os.Args[2:] {
+		if strings.HasPrefix(arg, "-") {
+			flagArgs = os.Args[2+i:]
+			break
+		}
+		hosts = append(hosts, arg)
+		flagArgs = os.Args[2+i+1:]
 	}
 
 	fs := flag.NewFlagSet("hotkey", flag.ContinueOnError)
@@ -106,15 +112,15 @@ func cmdHotkey() {
 		return
 	}
 
-	if host == "" {
-		host = storedCfg.Host
+	if len(hosts) == 0 {
+		hosts = storedCfg.Hosts
 	}
-	if host == "" {
-		log.Fatal("usage: cc-clip hotkey [<host>] [--remote-dir DIR] [--hotkey KEY] [--delay-ms N] [--enable-autostart] [--disable-autostart] [--stop] [--status]")
+	if len(hosts) == 0 {
+		log.Fatal("usage: cc-clip hotkey <host> [<host2> ...] [--remote-dir DIR] [--hotkey KEY] [--delay-ms N] [--enable-autostart] [--disable-autostart] [--stop] [--status]")
 	}
 
 	cfg := hotkeyConfig{
-		Host:      host,
+		Hosts:     hosts,
 		RemoteDir: *remoteDir,
 		DelayMS:   *delayMS,
 		Hotkey:    *hotkeyValue,
@@ -137,14 +143,14 @@ func cmdHotkey() {
 	}
 
 	if *runLoop {
-		runHotkeyLoop(cfg.Host, cfg.RemoteDir, cfg.Hotkey, time.Duration(cfg.DelayMS)*time.Millisecond)
+		runHotkeyLoop(cfg.Hosts, cfg.RemoteDir, cfg.Hotkey, time.Duration(cfg.DelayMS)*time.Millisecond)
 		return
 	}
 
-	startHotkeyBackground(cfg.Host, cfg.RemoteDir, cfg.Hotkey, cfg.DelayMS)
+	startHotkeyBackground(cfg.Hosts, cfg.RemoteDir, cfg.Hotkey, cfg.DelayMS)
 }
 
-func startHotkeyBackground(host, remoteDir, hotkey string, delayMS int) {
+func startHotkeyBackground(hosts []string, remoteDir, hotkey string, delayMS int) {
 	hotkeyStopIfStale()
 	if pid, ok := hotkeyProcessPID(); ok {
 		fmt.Printf("hotkey: already running (PID %d)\n", pid)
@@ -156,14 +162,13 @@ func startHotkeyBackground(host, remoteDir, hotkey string, delayMS int) {
 		log.Fatalf("cannot determine executable path: %v", err)
 	}
 
-	args := []string{
-		"hotkey",
-		host,
+	args := append([]string{"hotkey"}, hosts...)
+	args = append(args,
 		"--remote-dir", remoteDir,
 		"--hotkey", hotkey,
 		"--delay-ms", strconv.Itoa(delayMS),
 		"--run-loop",
-	}
+	)
 	cmd := exec.Command(exe, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
@@ -179,7 +184,7 @@ func startHotkeyBackground(host, remoteDir, hotkey string, delayMS int) {
 	fmt.Printf("hotkey: started in background (PID %d), trigger with %s\n", cmd.Process.Pid, hotkey)
 }
 
-func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
+func runHotkeyLoop(hosts []string, remoteDir, hotkey string, delay time.Duration) {
 	if err := initHotkeyLogger(); err != nil {
 		log.Fatalf("hotkey logger setup failed: %v", err)
 	}
@@ -204,13 +209,13 @@ func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 	}
 
 	cfg := hotkeyConfig{
-		Host:      host,
+		Hosts:     hosts,
 		RemoteDir: remoteDir,
 		DelayMS:   int(delay / time.Millisecond),
 		Hotkey:    hotkey,
 	}
 
-	log.Printf("hotkey: starting for host=%s remote_dir=%s hotkey=%s", host, remoteDir, binding.String())
+	log.Printf("hotkey: starting for hosts=%s remote_dir=%s hotkey=%s", strings.Join(hosts, ","), remoteDir, binding.String())
 
 	// Create tray (this also calls runtime.LockOSThread)
 	tray, err := newTray(cfg, binding, defaultDaemonPort())
@@ -262,7 +267,7 @@ func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 			if !hotkeyRunning.Swap(true) {
 				go func() {
 					defer hotkeyRunning.Store(false)
-					if err := handleHotkeyPress(host, remoteDir, binding, delay); err != nil {
+					if err := handleHotkeyPress(hosts, remoteDir, binding, delay); err != nil {
 						log.Printf("hotkey: send failed: %v", err)
 						return
 					}
@@ -277,7 +282,7 @@ func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 	}
 }
 
-func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time.Duration) error {
+func handleHotkeyPress(hosts []string, remoteDir string, binding hotkeyBinding, delay time.Duration) error {
 	log.Printf("hotkey: %s pressed", binding.String())
 
 	tray := globalTray
@@ -285,7 +290,8 @@ func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time
 		tray.showBalloon("cc-clip", "Uploading clipboard image...", niifInfo)
 	}
 
-	result, err := uploadImage(host, remoteDir, "")
+	// Read clipboard once; fan-out to all hosts from the same temp file.
+	localPath, ext, err := readClipboardToTempFile()
 	if err != nil {
 		if tray != nil {
 			if strings.Contains(err.Error(), "no image in clipboard") {
@@ -296,15 +302,56 @@ func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time
 		}
 		return err
 	}
-	defer func() {
-		if result.TempFile {
-			os.Remove(result.LocalImagePath)
+	defer os.Remove(localPath)
+	_ = ext // extension already embedded in the filename chosen by readClipboardToTempFile
+
+	type hostResult struct {
+		host       string
+		remotePath string
+		err        error
+	}
+	results := make([]hostResult, len(hosts))
+
+	var wg sync.WaitGroup
+	for i, host := range hosts {
+		wg.Add(1)
+		go func(idx int, h string) {
+			defer wg.Done()
+			res, err := uploadImage(h, remoteDir, localPath)
+			if err != nil {
+				results[idx] = hostResult{host: h, err: err}
+				log.Printf("hotkey: upload to %s failed: %v", h, err)
+				return
+			}
+			results[idx] = hostResult{host: h, remotePath: res.RemotePath}
+			log.Printf("hotkey: uploaded %s to %s", res.RemotePath, h)
+		}(i, host)
+	}
+	wg.Wait()
+
+	// Find first successful result for paste.
+	var firstRemotePath, firstHost string
+	successCount := 0
+	for _, r := range results {
+		if r.err == nil {
+			successCount++
+			if firstRemotePath == "" {
+				firstRemotePath = r.remotePath
+				firstHost = r.host
+			}
 		}
-	}()
+	}
 
-	log.Printf("hotkey: uploaded %s", result.RemotePath)
+	if successCount == 0 {
+		// All hosts failed; surface the first error.
+		firstErr := results[0].err
+		if tray != nil {
+			tray.showBalloon("cc-clip", "Send failed: "+firstErr.Error(), niifError)
+		}
+		return firstErr
+	}
 
-	if err := pasteRemotePath(result.RemotePath, result.LocalImagePath, delay, true); err != nil {
+	if err := pasteRemotePath(firstRemotePath, localPath, delay, true); err != nil {
 		if tray != nil {
 			tray.showBalloon("cc-clip", "Paste failed: "+err.Error(), niifError)
 		}
@@ -312,7 +359,8 @@ func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time
 	}
 
 	if tray != nil {
-		tray.showBalloon("cc-clip", "Image pasted to "+host, niifInfo)
+		msg := fmt.Sprintf("Image pasted to %s (%d/%d hosts)", firstHost, successCount, len(hosts))
+		tray.showBalloon("cc-clip", msg, niifInfo)
 	}
 	return nil
 }
@@ -336,12 +384,14 @@ func printHotkeyStatus() {
 		fmt.Printf("hotkey: config error: %v\n", err)
 		return
 	}
-	if !ok || cfg.Host == "" {
-		fmt.Println("hotkey: no saved default host")
+	if !ok || len(cfg.Hosts) == 0 {
+		fmt.Println("hotkey: no saved default hosts")
 		return
 	}
 
-	fmt.Printf("hotkey: default host %s\n", cfg.Host)
+	for i, h := range cfg.Hosts {
+		fmt.Printf("hotkey: host[%d] %s\n", i, h)
+	}
 	fmt.Printf("hotkey: remote dir %s\n", cfg.RemoteDir)
 	fmt.Printf("hotkey: delay %dms\n", cfg.DelayMS)
 	fmt.Printf("hotkey: key %s\n", cfg.Hotkey)

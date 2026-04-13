@@ -215,7 +215,8 @@ func (t *trayState) show() error {
 	}
 
 	// Show startup balloon
-	t.showBalloon("cc-clip", fmt.Sprintf("Hotkey %s ready\nHost: %s", t.binding.String(), t.cfg.Host), niifInfo)
+	hostList := strings.Join(t.cfg.Hosts, ", ")
+	t.showBalloon("cc-clip", fmt.Sprintf("Hotkey %s ready\nHosts: %s", t.binding.String(), hostList), niifInfo)
 
 	// Start health check timer
 	procSetTimer.Call(t.hwnd, timerHealthCheck, healthCheckIntervalMS, 0)
@@ -334,7 +335,11 @@ func (t *trayState) showContextMenu() {
 	appendMenuItem(hMenu, mfString|mfGrayed, menuIDTitle, versionStr)
 	appendMenuItem(hMenu, mfSeparator, 0, "")
 	appendMenuItem(hMenu, mfString|mfGrayed, menuIDHotkey, fmt.Sprintf("Hotkey: %s", t.binding.String()))
-	appendMenuItem(hMenu, mfString|mfGrayed, menuIDHost, fmt.Sprintf("Host: %s", t.cfg.Host))
+	hostsLabel := "Hosts: " + strings.Join(t.cfg.Hosts, ", ")
+	if len(hostsLabel) > 60 {
+		hostsLabel = hostsLabel[:57] + "..."
+	}
+	appendMenuItem(hMenu, mfString|mfGrayed, menuIDHost, hostsLabel)
 
 	daemonStatus := "Daemon: running"
 	if !t.daemonOK {
@@ -421,7 +426,7 @@ func trayWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		}
 		go func() {
 			defer hotkeyRunning.Store(false)
-			if err := handleHotkeyPress(t.cfg.Host, t.cfg.RemoteDir, t.binding, time.Duration(t.cfg.DelayMS)*time.Millisecond); err != nil {
+			if err := handleHotkeyPress(t.cfg.Hosts, t.cfg.RemoteDir, t.binding, time.Duration(t.cfg.DelayMS)*time.Millisecond); err != nil {
 				log.Printf("hotkey: send failed: %v", err)
 				return
 			}

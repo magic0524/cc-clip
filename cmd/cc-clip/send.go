@@ -232,6 +232,30 @@ func writeTempImage(data []byte, ext string) (string, error) {
 	return f.Name(), nil
 }
 
+// readClipboardToTempFile reads the clipboard image and writes it to a temp
+// file. The caller is responsible for removing the file when done.
+// Returns the local path and the image extension.
+func readClipboardToTempFile() (localPath, ext string, err error) {
+	clip := daemon.NewClipboardReader()
+	info, err := clip.Type()
+	if err != nil {
+		return "", "", fmt.Errorf("clipboard probe failed: %w", err)
+	}
+	if info.Type != daemon.ClipboardImage {
+		return "", "", fmt.Errorf("no image in clipboard (type: %s)", info.Type)
+	}
+	data, err := clip.ImageBytes()
+	if err != nil {
+		return "", "", fmt.Errorf("clipboard image read failed: %w", err)
+	}
+	if len(data) == 0 {
+		return "", "", fmt.Errorf("clipboard image is empty")
+	}
+	ext = imageExt(info.Format)
+	localPath, err = writeTempImage(data, ext)
+	return localPath, ext, err
+}
+
 func remoteExecNoForward(host, cmd string) (string, error) {
 	c := exec.Command("ssh", "-o", "ClearAllForwardings=yes", host, cmd)
 	hideConsoleWindow(c)

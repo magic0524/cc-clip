@@ -21,10 +21,10 @@ func defaultRemoteHost() (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if !ok || cfg.Host == "" {
+	if !ok || len(cfg.Hosts) == 0 {
 		return "", false, nil
 	}
-	return cfg.Host, true, nil
+	return cfg.Hosts[0], true, nil
 }
 
 func pasteRemotePath(remotePath, imagePath string, delay time.Duration, restoreClipboard bool) error {

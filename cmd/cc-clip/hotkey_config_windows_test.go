@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ func TestSaveLoadHotkeyConfig(t *testing.T) {
 	})
 
 	input := hotkeyConfig{
-		Host:      "myserver",
+		Hosts:     []string{"myserver"},
 		RemoteDir: "",
 		DelayMS:   0,
 	}
@@ -33,8 +34,11 @@ func TestSaveLoadHotkeyConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("expected config to exist")
 	}
-	if got.Host != "myserver" {
-		t.Fatalf("Host = %q, want %q", got.Host, "myserver")
+	if len(got.Hosts) == 0 || got.Hosts[0] != "myserver" {
+		t.Fatalf("Hosts[0] = %q, want %q", firstHost(got.Hosts), "myserver")
+	}
+	if got.Host != "" {
+		t.Fatalf("legacy Host field should be empty after save, got %q", got.Host)
 	}
 	if got.RemoteDir != defaultRemoteUploadDir {
 		t.Fatalf("RemoteDir = %q, want %q", got.RemoteDir, defaultRemoteUploadDir)
@@ -47,6 +51,40 @@ func TestSaveLoadHotkeyConfig(t *testing.T) {
 	}
 }
 
+func TestLoadHotkeyConfigMigratesLegacyHost(t *testing.T) {
+	tmpDir := t.TempDir()
+	hotkeyConfigPathOverride = filepath.Join(tmpDir, "hotkey.json")
+	t.Cleanup(func() {
+		hotkeyConfigPathOverride = ""
+	})
+
+	// Write old-style config with single "host" field.
+	legacy := map[string]interface{}{
+		"host":       "old-server",
+		"remote_dir": defaultRemoteUploadDir,
+		"delay_ms":   150,
+		"hotkey":     defaultHotkeyString,
+	}
+	data, _ := json.MarshalIndent(legacy, "", "  ")
+	if err := os.WriteFile(hotkeyConfigPathOverride, data, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, ok, err := loadHotkeyConfig()
+	if err != nil {
+		t.Fatalf("loadHotkeyConfig: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected config to exist")
+	}
+	if len(got.Hosts) != 1 || got.Hosts[0] != "old-server" {
+		t.Fatalf("Hosts = %v, want [old-server]", got.Hosts)
+	}
+	if got.Host != "" {
+		t.Fatalf("legacy Host field should be cleared after migration, got %q", got.Host)
+	}
+}
+
 func TestDefaultRemoteHostUsesSavedHotkeyConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	hotkeyConfigPathOverride = filepath.Join(tmpDir, "hotkey.json")
@@ -55,7 +93,7 @@ func TestDefaultRemoteHostUsesSavedHotkeyConfig(t *testing.T) {
 	})
 
 	if err := saveHotkeyConfig(hotkeyConfig{
-		Host:      "saved-host",
+		Hosts:     []string{"saved-host"},
 		RemoteDir: defaultRemoteUploadDir,
 		DelayMS:   150,
 		Hotkey:    "ctrl+alt+v",
@@ -83,7 +121,7 @@ func TestSaveHotkeyConfigNormalizesHotkey(t *testing.T) {
 	})
 
 	if err := saveHotkeyConfig(hotkeyConfig{
-		Host:      "myserver",
+		Hosts:     []string{"myserver"},
 		RemoteDir: defaultRemoteUploadDir,
 		DelayMS:   150,
 		Hotkey:    "Shift+Alt+V",
@@ -111,7 +149,7 @@ func TestSaveHotkeyConfigRejectsInvalidHotkey(t *testing.T) {
 	})
 
 	err := saveHotkeyConfig(hotkeyConfig{
-		Host:      "myserver",
+		Hosts:     []string{"myserver"},
 		RemoteDir: defaultRemoteUploadDir,
 		DelayMS:   150,
 		Hotkey:    "v",
@@ -281,4 +319,12 @@ func TestParseHotkey(t *testing.T) {
 			}
 		})
 	}
+}
+
+// firstHost is a test helper that returns "" if the slice is empty.
+func firstHost(hosts []string) string {
+	if len(hosts) == 0 {
+		return ""
+	}
+	return hosts[0]
 }

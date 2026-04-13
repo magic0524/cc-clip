@@ -33,11 +33,12 @@ var hotkeyRegQuery = func(key, name string) (string, error) {
 }
 
 type hotkeyConfig struct {
-	Host          string `json:"host"`
-	RemoteDir     string `json:"remote_dir"`
-	DelayMS       int    `json:"delay_ms"`
-	Hotkey        string `json:"hotkey"`
-	Notifications *bool  `json:"notifications,omitempty"`
+	Host          string   `json:"host,omitempty"`   // legacy — read only for migration
+	Hosts         []string `json:"hosts,omitempty"`  // primary multi-host field
+	RemoteDir     string   `json:"remote_dir"`
+	DelayMS       int      `json:"delay_ms"`
+	Hotkey        string   `json:"hotkey"`
+	Notifications *bool    `json:"notifications,omitempty"`
 }
 
 func loadHotkeyConfig() (hotkeyConfig, bool, error) {
@@ -60,9 +61,11 @@ func loadHotkeyConfig() (hotkeyConfig, bool, error) {
 
 func saveHotkeyConfig(cfg hotkeyConfig) error {
 	normalizeHotkeyConfig(&cfg)
-	if cfg.Host == "" {
-		return fmt.Errorf("hotkey host cannot be empty")
+	if len(cfg.Hosts) == 0 {
+		return fmt.Errorf("hotkey hosts cannot be empty")
 	}
+	// Do not persist the legacy Host field.
+	cfg.Host = ""
 	binding, err := parseHotkey(cfg.Hotkey)
 	if err != nil {
 		return err
@@ -87,6 +90,23 @@ func saveHotkeyConfig(cfg hotkeyConfig) error {
 }
 
 func normalizeHotkeyConfig(cfg *hotkeyConfig) {
+	// Migrate legacy single-host field to Hosts slice.
+	if len(cfg.Hosts) == 0 && cfg.Host != "" {
+		cfg.Hosts = []string{cfg.Host}
+	}
+	cfg.Host = "" // always clear legacy field after migration
+
+	// Deduplicate hosts while preserving order.
+	seen := make(map[string]struct{}, len(cfg.Hosts))
+	deduped := cfg.Hosts[:0]
+	for _, h := range cfg.Hosts {
+		if _, ok := seen[h]; !ok {
+			seen[h] = struct{}{}
+			deduped = append(deduped, h)
+		}
+	}
+	cfg.Hosts = deduped
+
 	if cfg.RemoteDir == "" {
 		cfg.RemoteDir = defaultRemoteUploadDir
 	}
